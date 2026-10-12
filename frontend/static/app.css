@@ -43,6 +43,13 @@ a { color: var(--accent-2); }
 .bubble.user { background: #2b3a52; align-self: flex-end; border-bottom-right-radius: 4px; }
 .bubble.system { background: transparent; color: var(--muted); font-size: .8rem; align-self: center; }
 .bubble.nudge { border-color: var(--warn); }
+.resume-banner {
+  display: flex; align-items: center; gap: 12px; justify-content: space-between;
+  background: var(--panel); border: 1px solid var(--warn); border-radius: var(--radius);
+  padding: 12px 14px; margin-bottom: 12px; font-size: .9rem; color: var(--text);
+}
+.resume-banner[hidden] { display: none; }
+.resume-banner button { padding: 8px 14px; font-size: .85rem; flex: none; }
 .composer { display: flex; gap: 8px; padding-top: 12px; border-top: 1px solid #262c38; }
 .composer input {
   flex: 1; background: var(--panel); color: var(--text); border: 1px solid #2a3140;

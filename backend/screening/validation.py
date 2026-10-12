@@ -89,6 +89,32 @@ def map_schedule(text: str) -> Optional[Schedule]:
     return None
 
 
+_PLATFORM_RE = re.compile(
+    r"\b(glovo|globo|uber eats|ubereats|uber|deliveroo|just eat|justeat|stuart|wolt|rappi|didi food|riders?)\b"
+)
+_PLATFORM_ALIASES = {"globo": "glovo", "ubereats": "uber eats", "justeat": "just eat", "uber": "uber eats", "rider": "riders"}
+_EXPERIENCE_HINT_RE = re.compile(r"\b(experiencia|experience|repart|repartidor|deliver|delivery|rider)\b")
+
+
+def parse_platforms(text: str) -> list[str]:
+    norm = normalize(text)
+    out: list[str] = []
+    for match in _PLATFORM_RE.finditer(norm):
+        name = _PLATFORM_ALIASES.get(match.group(1), match.group(1))
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def parse_experience_fallback(text: str) -> tuple[Optional[int], list[str]]:
+    """Raw-text fallback for the experience stage when the LLM extraction fails."""
+    years = parse_years(text)
+    platforms = parse_platforms(text)
+    if years is None and (platforms or _EXPERIENCE_HINT_RE.search(normalize(text)) or map_yes_no(text) is not None):
+        years = 0
+    return years, platforms
+
+
 def parse_years(text: str) -> Optional[int]:
     norm = normalize(text)
     if re.search(r"\bno experience\b|\bsin experiencia\b|\bnone\b|\bninguna\b|\bzero\b|\b0\b", norm):
@@ -96,6 +122,8 @@ def parse_years(text: str) -> Optional[int]:
     match = re.search(r"(\d{1,2})\s*(?:years?|anos?|yrs?)?", norm)
     if match:
         return max(0, min(int(match.group(1)), 50))
+    if re.search(r"\bun\s+an[oa]s?\b|\bone\s+year\b", norm):
+        return 1
     word_numbers = {
         "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
         "uno": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10,

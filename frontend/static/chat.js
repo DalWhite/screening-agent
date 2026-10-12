@@ -6,6 +6,7 @@ let polling = null;
 let listening = false;
 let recognition = null;
 let lastLang = "es";
+const SESSION_KEY = "sazon_session_id";
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -106,6 +107,7 @@ async function sendText(text) {
     });
     typing.remove();
     lastLang = r.language || lastLang;
+    if (r.resumed && r.resume_reply) bubble(r.resume_reply, "agent");
     bubble(r.reply, "agent");
     speak(r.reply, r.language);
     setStage(r.stage, r.status);
@@ -163,24 +165,74 @@ $("end").addEventListener("click", async () => {
       renderOutcome(r.summary);
       clearInterval(polling);
     }
+    if (r.status === "abandoned") $("resume-banner").hidden = false;
   } catch (e) {
     bubble("Error: " + e.message, "system");
   }
 });
 
-async function init() {
+$("resume").addEventListener("click", async () => {
+  if (!sessionId) return;
+  $("resume").disabled = true;
   try {
-    const s = await api("/api/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source: "web" }),
-    });
-    sessionId = s.session_id;
-    lastLang = s.language || "es";
-    bubble(s.reply, "agent");
-    speak(s.reply, lastLang);
-    setStage(s.stage, "active");
-    polling = setInterval(pollPending, 15000);
+    const r = await api(`/api/sessions/${sessionId}/resume`, { method: "POST" });
+    $("resume-banner").hidden = true;
+    lastLang = r.language || lastLang;
+    bubble(r.reply, "agent");
+    speak(r.reply, lastLang);
+    setStage(r.stage, r.status);
+    if (!polling) polling = setInterval(pollPending, 15000);
+  } catch (e) {
+    bubble("No se pudo retomar: " + e.message, "system");
+    $("resume").disabled = false;
+  }
+});
+
+function renderHistory(messages) {
+  for (const m of messages) {
+    if (m.role === "assistant") bubble(m.content, m.delivered ? "agent" : "agent nudge");
+    else if (m.role === "user") bubble(m.content, "user");
+  }
+}
+
+async function restoreSession(id) {
+  const s = await api(`/api/sessions/${id}`);
+  sessionId = s.session_id || id;
+  lastLang = s.language || "es";
+  renderHistory(s.messages || []);
+  setStage(s.stage, s.status);
+  if (s.summary) renderOutcome(s.summary);
+  if (s.status === "abandoned") $("resume-banner").hidden = false;
+  polling = setInterval(pollPending, 15000);
+}
+
+async function startFresh() {
+  const s = await api("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "web" }),
+  });
+  sessionId = s.session_id;
+  localStorage.setItem(SESSION_KEY, sessionId);
+  lastLang = s.language || "es";
+  bubble(s.reply, "agent");
+  speak(s.reply, lastLang);
+  setStage(s.stage, "active");
+  polling = setInterval(pollPending, 15000);
+}
+
+async function init() {
+  const saved = localStorage.getItem(SESSION_KEY);
+  if (saved) {
+    try {
+      await restoreSession(saved);
+      return;
+    } catch {
+      localStorage.removeItem(SESSION_KEY);
+    }
+  }
+  try {
+    await startFresh();
   } catch (e) {
     bubble("No se pudo conectar con el agente: " + e.message, "system");
   }

@@ -8,12 +8,30 @@
 
 The agent runs a deterministic stage machine. The LLM never decides the flow — it only extracts data and phrases replies. This keeps the process auditable and prevents hallucinated disqualifications.
 
-```
-INTRO → NAME → LICENSE → LOCATION → AVAILABILITY → SCHEDULE → EXPERIENCE → START_DATE → REVIEW → QUALIFIED
-              │ no-license ──────────────────────────────────────────────────────────────→ DISQUALIFIED (soft landing: bike-courier waitlist)
-                       │ out-of-area (1 retry) ──────────────────────────────────────────→ DISQUALIFIED (waitlist_out_of_area)
-Any stage: 3 failed attempts → accept-with-flag (unresolved:<stage>) + needs_review
-Any time:  guardrail breach ×3 → ABANDONED · silence 45s/120s → nudge ×2 → 300s → ABANDONED (silence)
+```mermaid
+flowchart TD
+    A[Intro] --> B[Name]
+    B --> C{License?}
+    C -- yes --> D{Location in service area?}
+    C -- no --> K1[DISQUALIFIED<br/>bike-courier waitlist]
+    D -- valid --> E[Availability]
+    D -- out of area --> F[One retry]
+    F -- valid --> E
+    F -- still out --> K2[DISQUALIFIED<br/>waitlist_out_of_area]
+    E --> G[Schedule]
+    G --> H[Experience — optional]
+    H --> I[Start date]
+    I --> J[Review: recap + confirm]
+    J --> Q[QUALIFIED → recruiter shortlist]
+
+    C & D & E & G & H & I -. invalid answer .-> R[Re-ask with new phrasing]
+    R -. same stage, ≤3 attempts .-> C
+    R -. 3 strikes: accept-with-flag .-> S[unresolved:stage · needs_review]
+    S -.-> J
+
+    T[Silence: nudge at 45s/120s → close at 300s] -.-> AB[ABANDONED]
+    AB -. candidate returns ≤48h .-> RS[RESUME<br/>re-opens at dropped stage]
+    RS -.-> C
 ```
 
 - **LICENSE is the hard gate** — a "no" ends the driver-role screening immediately (per the brief), but the candidate is politely offered the bike-courier waitlist (per Sazón's own FAQ). Disqualifying early is the single biggest recruiter-time saving.
@@ -46,6 +64,7 @@ Every field stores the raw candidate text + normalized value, so recruiters can 
 ## 4. Edge cases
 
 - **Mid-conversation silence:** nudge at 45s, second nudge at 120s, session auto-closes as ABANDONED(silence) at 300s. Nudges are logged as events and counted in analytics (recovery rate).
+- **Coming back after silence:** an abandoned session can be **resumed with its session id within 48h** (`RESUME_WINDOW_HOURS`): the candidate is welcomed back and the agent re-asks the exact question they dropped. Qualified/disqualified decisions are final and cannot be resumed.
 - **Invalid/ambiguous answers:** re-ask with alternate phrasing; after 3 attempts the stage is accepted-with-flag (`unresolved:<stage>`, `needs_review`) rather than looping forever — a human reviews it.
 - **Language switching:** per-message detection; MIXED answers keep the conversation language; summaries use the dominant language (ties → Spanish).
 - **Qualified vs disqualified paths:** qualified → recap + confirmation + recruiter shortlist entry; disqualified → clear, respectful closure with the specific reason and (where applicable) the waitlist alternative.

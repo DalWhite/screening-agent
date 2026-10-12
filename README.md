@@ -2,7 +2,7 @@
 
 An AI screening agent for **Grupo Sazón** (45 restaurant locations, Spain & Mexico) that pre-screens delivery-courier candidates in a natural Spanish/English conversation, extracts structured data, validates it against hard hiring rules, and hands recruiters a clean, ranked pipeline with analytics.
 
-Built for the Orbio FDE technical assignment. See `docs/process_design.md` (process design) and `docs/architecture.md` (technical design).
+Built for the Orbio FDE technical assignment. See `docs/process_design.md` (process design + Mermaid flow diagram) and `docs/architecture.md` (technical design + Mermaid component map and turn sequence diagram).
 
 ## Quick start
 
@@ -32,7 +32,8 @@ LLM_FALLBACK=mock DB_PATH=data/sazon_test.db python -m uvicorn backend.app:app -
 2. Switch languages mid-chat (English answer to a Spanish question) — the agent follows the candidate.
 3. Chat page: "no tengo licencia" → soft disqualification + bike-waitlist offer.
 4. Chat page: type nothing for ~45s → re-engagement nudge arrives automatically.
-5. Dashboard: see both sessions, transcripts, extracted JSON, flags, funnel and drop-off analytics.
+5. Chat page: end (or let it go silent), then reload the page → the **resume banner** reopens the conversation exactly where it stopped (within 48h). Qualified/disqualified outcomes are final and cannot be resumed.
+6. Dashboard: see both sessions, transcripts, extracted JSON, flags, funnel and drop-off analytics.
 
 > Tip: run the demo server standalone (not while another app is hammering the same local model server) — the local inference slot is single-threaded.
 
@@ -51,13 +52,13 @@ Key properties:
 - **Bilingual + code-switching** — per-message language detection with conversation-level dominance; templates and FAQ are ES/EN.
 - **Guardrails & privacy** — prompt-injection and abusive-input screening, no document/bank requests, PII redaction from stored notes, 90-day retention, GDPR/Mexico data-residency rationale for running a local model.
 - **RAG** — BM25 over a 26-item bilingual FAQ; answers only from retrieved context, with the FAQ id logged per turn.
-- **Re-engagement** — background monitor nudges silent candidates at 45s/120s, closes as `abandoned(silence)` at 300s; recovery rate is tracked in analytics.
+- **Re-engagement & resume** — background monitor nudges silent candidates at 45s/120s, closes as `abandoned(silence)` at 300s; recovery rate is tracked in analytics. An abandoned session can be **resumed with its session id within 48h** (`RESUME_WINDOW_HOURS`): the chat restores the transcript and the agent re-asks the exact question the candidate dropped. Qualified/disqualified decisions stay final.
 - **Storage** — SQLite (sessions/messages/events), full conversation history, structured summary per session, REST API for a future ATS integration.
 
 ## Tests & evals
 
 ```bash
-python -m pytest tests/ -q        # 52 unit/scenario tests
+python -m pytest tests/ -q        # 66 unit/scenario tests
 python tests/evals/run_evals.py   # 6 end-to-end conversation evals -> tests/evals/report.json
 ```
 

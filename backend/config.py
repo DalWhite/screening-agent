@@ -41,6 +41,7 @@ class Settings:
     reengage_second_delay: int = field(default_factory=lambda: _int("REENGAGE_SECOND_DELAY_SECONDS", 120))
     reengage_max_attempts: int = field(default_factory=lambda: _int("REENGAGE_MAX_ATTEMPTS", 2))
     session_idle_seconds: int = field(default_factory=lambda: _int("SESSION_IDLE_SECONDS", 300))
+    resume_window_hours: int = field(default_factory=lambda: _int("RESUME_WINDOW_HOURS", 48))
 
     pii_redaction: bool = field(default_factory=lambda: _bool("PII_REDACTION", True))
     retention_days: int = field(default_factory=lambda: _int("RETENTION_DAYS", 90))

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -34,36 +34,43 @@ def _parse_ts(value: str) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+def _state_from_row(row: dict) -> SessionState | None:
+    try:
+        data = ScreeningData(**(row.get("data") or {}))
+    except Exception:
+        return None
+    state = SessionState(
+        id=row["id"],
+        stage=Stage(row["stage"]),
+        data=data,
+        language=Lang(row["language"]),
+        status=row["status"],
+        source=row["source"],
+        started_at=_parse_ts(row["started_at"]),
+        reengage_attempts=row["reengage_attempts"],
+        flags=list(row.get("flags") or []),
+        notes=list(row.get("notes") or []),
+        given_up=list(row.get("given_up") or []),
+        languages_seen=list(row.get("languages") or []),
+        rag_hits=list(row.get("rag_hits") or []),
+        summary=row.get("summary"),
+        dropped_at=row.get("dropped_at_stage") or (row.get("summary") or {}).get("dropped_at_stage"),
+    )
+    full = db.get_session(row["id"]) or {}
+    state.history = [{"role": m["role"], "content": m["content"]} for m in full.get("messages", [])]
+    try:
+        state.last_candidate_ts = _parse_ts(row["last_ts"])
+    except ValueError:
+        pass
+    return state
+
+
 def _load_active_sessions() -> None:
     """Restore active sessions from SQLite so restarts don't orphan candidates."""
     for row in db.list_sessions(status="active", limit=500):
-        try:
-            data = ScreeningData(**(row.get("data") or {}))
-        except Exception:
+        state = _state_from_row(row)
+        if state is None:
             continue
-        state = SessionState(
-            id=row["id"],
-            stage=Stage(row["stage"]),
-            data=data,
-            language=Lang(row["language"]),
-            status=row["status"],
-            source=row["source"],
-            started_at=_parse_ts(row["started_at"]),
-            reengage_attempts=row["reengage_attempts"],
-            flags=list(row.get("flags") or []),
-            notes=list(row.get("notes") or []),
-            given_up=list(row.get("given_up") or []),
-            languages_seen=list(row.get("languages") or []),
-            rag_hits=list(row.get("rag_hits") or []),
-            summary=row.get("summary"),
-            dropped_at=(row.get("summary") or {}).get("dropped_at_stage"),
-        )
-        full = db.get_session(row["id"]) or {}
-        state.history = [{"role": m["role"], "content": m["content"]} for m in full.get("messages", [])]
-        try:
-            state.last_candidate_ts = _parse_ts(row["last_ts"])
-        except ValueError:
-            pass
         registry[state.id] = state
     if registry:
         log.info("restored %d active sessions from storage", len(registry))
@@ -98,6 +105,12 @@ class MessageRequest(BaseModel):
 def _get_state(session_id: str) -> SessionState:
     state = registry.get(session_id)
     if state is None:
+        row = db.get_session(session_id)
+        if row is not None:
+            state = _state_from_row(row)
+            if state is not None:
+                registry[state.id] = state
+    if state is None:
         raise HTTPException(status_code=404, detail="session not found")
     return state
 
@@ -131,10 +144,26 @@ def create_session(req: CreateSessionRequest) -> dict:
     return {"session_id": state.id, "reply": reply, "stage": state.stage.value, "language": state.language.value}
 
 
+def _resume_if_needed(state: SessionState) -> str | None:
+    """Reopen an abandoned session when the candidate comes back in time."""
+    assert agent is not None
+    if state.status != "abandoned":
+        return None
+    age = datetime.now(timezone.utc) - state.last_candidate_ts
+    if age > timedelta(hours=settings.resume_window_hours):
+        raise HTTPException(status_code=410, detail="resume window expired; start a new conversation")
+    reply = agent.resume(state)
+    db.save_session(state)
+    db.append_message(state.id, "assistant", reply, state.stage.value)
+    db.append_events(state.id, [{"type": "session_resume", "payload": {"stage": state.stage.value}}], state.stage.value)
+    return reply
+
+
 @app.post("/api/sessions/{session_id}/messages")
 def send_message(session_id: str, req: MessageRequest) -> dict:
     assert agent is not None
     state = _get_state(session_id)
+    resume_reply = _resume_if_needed(state)
     reply, decision = agent.process(state, req.text)
     _persist_turn(state, req.text, reply, decision)
     return {
@@ -146,6 +175,8 @@ def send_message(session_id: str, req: MessageRequest) -> dict:
         "validation_error": decision.validation_error,
         "guardrail": decision.guardrail,
         "rag_used": decision.rag_used,
+        "resumed": resume_reply is not None,
+        "resume_reply": resume_reply,
         "summary": state.summary,
     }
 
@@ -154,6 +185,26 @@ def send_message(session_id: str, req: MessageRequest) -> dict:
 def pending(session_id: str) -> dict:
     _get_state(session_id)
     return {"messages": db.pending_messages(session_id)}
+
+
+@app.post("/api/sessions/{session_id}/resume")
+def resume_session(session_id: str) -> dict:
+    assert agent is not None
+    state = _get_state(session_id)
+    if state.stage in (Stage.QUALIFIED, Stage.DISQUALIFIED):
+        raise HTTPException(status_code=409, detail="final decisions cannot be resumed")
+    if state.status == "active":
+        reply = agent.resume(state)
+        db.save_session(state)
+        db.append_message(state.id, "assistant", reply, state.stage.value)
+        return {"reply": reply, "stage": state.stage.value, "status": state.status, "language": state.language.value}
+    resume_reply = _resume_if_needed(state)
+    return {
+        "reply": resume_reply or agent.resume(state),
+        "stage": state.stage.value,
+        "status": state.status,
+        "language": state.language.value,
+    }
 
 
 @app.post("/api/sessions/{session_id}/end")

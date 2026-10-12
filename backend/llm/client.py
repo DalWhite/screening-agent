@@ -16,6 +16,7 @@ from ..screening.validation import (
     map_availability,
     map_schedule,
     parse_date_text,
+    parse_experience_fallback,
     parse_years,
     validate_name,
 )
@@ -184,11 +185,9 @@ class MockLLM(BaseLLM):
             sched = map_schedule(clean)
             result.preferred_schedule = sched.value if sched else None
         elif stage is Stage.EXPERIENCE:
-            result.experience_years = parse_years(clean)
-            platforms = re.findall(r"\b(glovo|uber eats|uber|deliveroo|just eat|justeat|riders|stuart|wolt|doordash|ubereats)\b", low)
-            result.experience_platforms = sorted(set(platforms)) or None
-            if result.experience_years is None and re.search(r"\b(experience|experiencia|repart|deliver)\b", low):
-                result.experience_years = 0
+            years, platforms = parse_experience_fallback(clean)
+            result.experience_years = years
+            result.experience_platforms = platforms or None
         elif stage is Stage.START_DATE:
             parsed = parse_date_text(clean, today)
             result.start_date = parsed.isoformat() if parsed else None

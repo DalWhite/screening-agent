@@ -1,8 +1,10 @@
 from datetime import date
 
+import pytest
+
 from backend.llm.client import MockLLM
 from backend.screening.agent import ScreeningAgent
-from backend.screening.schema import ExtractionResult, Intent, Schedule, Stage
+from backend.screening.schema import ExtractionResult, Intent, Schedule, Stage, TurnDecision
 
 TODAY = date(2026, 10, 11)
 
@@ -154,6 +156,36 @@ def test_schedule_raw_text_fallback():
     assert any(e["type"] == "field_fallback" for e in decision.events)
 
 
+def test_experience_raw_text_fallback():
+    agent = ScreeningAgent(NullAt({Stage.EXPERIENCE}))
+    state = agent.new_session()
+    agent.opening(state)
+    for msg in ["hola", "Pedro Sánchez", "sí", "Madrid, Centro", "jornada completa", "flexible"]:
+        agent.process(state, msg, today=TODAY)
+    _, decision = agent.process(state, "sí en globo un año y en uber eats 2 años", today=TODAY)
+    assert state.data.experience_years == 2
+    assert "glovo" in state.data.experience_platforms
+    assert "uber eats" in state.data.experience_platforms
+    assert decision.validation_error is None
+    assert any(e["type"] == "field_fallback" for e in decision.events)
+    assert state.stage is Stage.START_DATE
+
+
+def test_experience_garbage_gives_up_and_moves_on():
+    agent = ScreeningAgent(NullAt({Stage.EXPERIENCE}))
+    state = agent.new_session()
+    agent.opening(state)
+    for msg in ["hola", "Pedro Sánchez", "sí", "Madrid, Centro", "jornada completa", "flexible"]:
+        agent.process(state, msg, today=TODAY)
+    agent.process(state, "quizás tal vez", today=TODAY)
+    assert "experience" in state.given_up
+    assert "unresolved:experience" in state.flags
+    assert state.stage is Stage.START_DATE
+    agent.process(state, "la próxima semana", today=TODAY)
+    assert state.stage is Stage.QUALIFIED
+    assert state.summary["qualified"] is True
+
+
 def test_phrasing_leak_guard():
     agent = ScreeningAgent(LeakLLM())
     state = agent.new_session()
@@ -163,3 +195,46 @@ def test_phrasing_leak_guard():
     assert "Question to ask" not in reply
     assert "The previous answer was not valid" not in reply
     assert any(e["type"] == "phrasing_fallback" for e in decision.events)
+
+
+def _abandon(agent, state):
+    decision = TurnDecision(stage_before=state.stage, stage_after=state.stage)
+    agent._close(state, decision, Stage.ABANDONED, None, None)
+
+
+def test_resume_returns_to_dropped_stage():
+    agent = ScreeningAgent(MockLLM())
+    state = agent.new_session()
+    agent.opening(state)
+    for msg in ["hola", "Pedro Sánchez", "sí"]:
+        agent.process(state, msg, today=TODAY)
+    assert state.stage is Stage.LOCATION
+    _abandon(agent, state)
+    assert state.status == "abandoned"
+    assert state.summary["dropped_at_stage"] == "location"
+    reply = agent.resume(state)
+    assert state.stage is Stage.LOCATION
+    assert state.status == "active"
+    assert state.summary is None
+    assert "retomamos" in reply.lower()
+    agent.process(state, "Madrid, Centro", today=TODAY)
+    assert state.stage is Stage.AVAILABILITY
+
+
+def test_resume_english_session():
+    agent = ScreeningAgent(MockLLM())
+    state = agent.new_session(language="en")
+    agent.opening(state)
+    for msg in ["hello", "Peter Smith", "yes"]:
+        agent.process(state, msg, today=TODAY)
+    _abandon(agent, state)
+    reply = agent.resume(state)
+    assert "welcome back" in reply.lower()
+    assert state.stage is Stage.LOCATION
+
+
+def test_final_decisions_cannot_be_resumed():
+    agent, state, _ = run(["hola", "Pedro Sánchez", "no tengo carnet"])
+    assert state.stage is Stage.DISQUALIFIED
+    with pytest.raises(ValueError):
+        agent.resume(state)

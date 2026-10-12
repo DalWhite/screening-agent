@@ -2,22 +2,24 @@
 
 ## Component map
 
-```
-frontend/                     backend/
-  index.html  chat.js  ──┐    app.py (FastAPI)
-  (text + mic input)     ├──→  /api/sessions*  /api/analytics  /api/health
-  dashboard.html ────────┘       │
-                                 ├── screening/agent.py      deterministic stage machine
-                                 │     ├── language.py       ES/EN detect + switch
-                                 │     ├── guardrails.py     injection/abuse/self-harm/PII
-                                 │     ├── validation.py     field rules + ES/EN date parsing
-                                 │     ├── service_areas.py  45-city matcher (alias/zone/fuzzy)
-                                 │     ├── rag.py            BM25 over 26 bilingual FAQ docs
-                                 │     └── prompts.py        persona, questions, fallbacks
-                                 ├── llm/client.py           OpenAI-compatible + MockLLM
-                                 ├── storage/db.py           SQLite (sessions/messages/events)
-                                 ├── analytics/metrics.py    funnel, drop-off, recovery rates
-                                 └── reengagement.py         idle nudges + auto-abandon loop
+```mermaid
+graph LR
+    subgraph browser[Browser]
+        CHAT[index.html + chat.js<br/>text + mic + TTS + resume banner]
+        DASH[dashboard.html<br/>recruiter tool]
+    end
+    CHAT -- REST --> API[FastAPI app.py]
+    DASH -- REST --> API
+    API --> AG[ScreeningAgent<br/>deterministic stage machine]
+    AG --> LANG[language.py<br/>ES/EN detect + switch]
+    AG --> GR[guardrails.py<br/>injection/abuse/self-harm/PII]
+    AG --> VAL[validation.py + service_areas.py<br/>field rules · 45-city matcher]
+    AG --> RAG[rag.py<br/>BM25 over 26 bilingual FAQs]
+    AG --> LLM[llm/client.py<br/>OpenAI-compatible Strata Qwen<br/>MockLLM fallback]
+    API --> DB[(SQLite<br/>sessions · messages · events)]
+    MON[reengagement.py<br/>nudges · auto-abandon · resume window] --> DB
+    API --> AN[analytics/metrics.py<br/>funnel · drop-off · recovery]
+    DASH -- GET /api/analytics --> AN
 ```
 
 ## Request flow (one candidate turn)
@@ -28,6 +30,32 @@ frontend/                     backend/
 4. Validation normalizes/validates each field (service-area match, availability/schedule keyword maps, date window). Invalid → re-ask with alternate phrasing; 3 strikes → accept-with-flag.
 5. Reply is phrased by the LLM from a plan; if the LLM is unavailable, **templates** guarantee the conversation never breaks (`MockLLM` for tests/demos).
 6. Turn persisted atomically: session row + message rows + events (`stage_advance`, `reask`, `rag_answer`, `guardrail`, `disqualify`…). User text stored redacted.
+
+## System design (one candidate turn)
+
+```mermaid
+sequenceDiagram
+    participant C as Candidate (chat.js)
+    participant A as FastAPI (app.py)
+    participant G as Guardrails
+    participant S as Stage machine (agent.py)
+    participant L as LLM (Strata Qwen / MockLLM)
+    participant D as SQLite
+
+    C->>A: POST /api/sessions/{id}/messages {text}
+    A->>G: screen_input + PII redaction (before LLM sees text)
+    G-->>A: clean text (or redirect / warn / abandon)
+    A->>S: process(state, text)
+    S->>L: extract(stage) — tool call, current stage only
+    L-->>S: structured JSON (ExtractionResult)
+    S->>S: validate → advance / re-ask / disqualify / RAG answer
+    S->>L: generate(plan) — phrasing from template plan
+    L-->>S: reply (deterministic template if LLM down or leaks)
+    S-->>A: reply + TurnDecision (events, stage_after)
+    A->>D: save session + messages + events (atomic)
+    A-->>C: {reply, stage, status, summary?}
+    Note over A,D: silence 300s → monitor closes as ABANDONED<br/>candidate returns ≤48h → POST /resume re-asks dropped stage
+```
 
 ## Why this design (key trade-offs)
 
@@ -51,6 +79,7 @@ frontend/                     backend/
 | `POST /api/sessions/{id}/messages` | candidate turn → reply + decision |
 | `GET /api/sessions/{id}/pending` | poll for re-engagement nudges |
 | `POST /api/sessions/{id}/end` | candidate ends conversation |
+| `POST /api/sessions/{id}/resume` | reopen an abandoned session (≤48h); final decisions → 409, expired → 410 |
 | `GET /api/sessions?status=&qualified=&q=` | recruiter list/search |
 | `GET /api/sessions/{id}` | full transcript + events + summary JSON |
 | `GET /api/analytics` | funnel, completion/qualified rates, drop-off by stage, language mix, nudge recovery |

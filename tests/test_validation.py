@@ -6,6 +6,8 @@ from backend.screening.validation import (
     map_schedule,
     map_yes_no,
     parse_date_text,
+    parse_experience_fallback,
+    parse_platforms,
     parse_years,
     validate_name,
     validate_start_date,
@@ -60,6 +62,23 @@ def test_parse_years():
     assert parse_years("2 años") == 2
     assert parse_years("no experience") == 0
     assert parse_years("three years") == 3
+    assert parse_years("sí en globo un año y en uber eats 2 años") == 2
+    assert parse_years("un año en glovo") == 1
+
+
+def test_parse_platforms():
+    assert parse_platforms("sí en globo un año y en uber eats 2 años") == ["glovo", "uber eats"]
+    assert parse_platforms("trabajé en Deliveroo y Wolt") == ["deliveroo", "wolt"]
+    assert parse_platforms("no he trabajado nunca") == []
+
+
+def test_experience_fallback():
+    years, platforms = parse_experience_fallback("sí en globo un año y en uber eats 2 años")
+    assert years == 2 and platforms == ["glovo", "uber eats"]
+    assert parse_experience_fallback("no tengo experiencia")[0] == 0
+    assert parse_experience_fallback("sí")[0] == 0
+    assert parse_experience_fallback("repartí en riders")[0] == 0
+    assert parse_experience_fallback("quizás tal vez") == (None, [])
 
 
 def test_parse_date_iso():

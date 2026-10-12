@@ -14,6 +14,7 @@ from .prompts import (
     CLOSED_MESSAGES,
     DISQUALIFY_MESSAGES,
     REASK_MESSAGES,
+    RESUME_MESSAGES,
     STAGE_QUESTIONS,
     SUMMARY_NOTE_PROMPT,
 )
@@ -38,6 +39,7 @@ from .validation import (
     map_schedule,
     map_yes_no,
     parse_date_text,
+    parse_experience_fallback,
     parse_years,
     validate_name,
     validate_start_date,
@@ -136,6 +138,28 @@ class ScreeningAgent:
         state.history.append({"role": "assistant", "content": text})
         state.completed_stages.append(Stage.INTRO.value)
         return text
+
+    def resume(self, state: SessionState) -> str:
+        """Reopen an abandoned (silence-timeout) session at the stage the
+        candidate dropped. Qualified/disqualified decisions stay final."""
+        if state.stage in (Stage.QUALIFIED, Stage.DISQUALIFIED):
+            raise ValueError("final decisions cannot be resumed")
+        dropped = state.dropped_at or (state.summary or {}).get("dropped_at_stage")
+        stage = Stage(dropped) if dropped else Stage.INTRO
+        if stage in TERMINAL_STAGES or stage is Stage.REVIEW:
+            stage = self._next_required_stage(state)
+        state.stage = stage
+        state.status = "active"
+        state.summary = None
+        state.dropped_at = None
+        state.reengage_attempts = 0
+        state.last_candidate_ts = datetime.now(timezone.utc)
+        state.attempts.pop(stage.value, None)
+        if stage.value in state.given_up:
+            state.given_up.remove(stage.value)
+        reply = f"{RESUME_MESSAGES[state.language.value]} {self._question(stage, state)}".strip()
+        state.history.append({"role": "assistant", "content": reply})
+        return reply
 
     def process(self, state: SessionState, user_text: str, today: Optional[date] = None) -> tuple[str, TurnDecision]:
         today = today or date.today()
@@ -297,6 +321,14 @@ class ScreeningAgent:
                 decision.validation_error = str(result.error)
         if ex.experience_platforms:
             data.experience_platforms = [str(p).strip() for p in ex.experience_platforms if str(p).strip()][:8]
+        if data.experience_years is None and state.stage is Stage.EXPERIENCE:
+            years, platforms = parse_experience_fallback(clean)
+            if years is not None and validate_years(years).ok:
+                data.experience_years = years
+                decision.validation_error = None
+                decision.events.append({"type": "field_fallback", "payload": {"field": "experience_years", "source": "raw_text"}})
+            if platforms and not data.experience_platforms:
+                data.experience_platforms = platforms[:8]
 
         if ex.start_date:
             parsed = parse_date_text(str(ex.start_date), today)
@@ -356,7 +388,7 @@ class ScreeningAgent:
 
         field_name = STAGE_FIELD.get(current)
         still_missing = field_name is not None and getattr(state.data, field_name, None) in (None, [], "")
-        if error is None and still_missing and current not in OPTIONAL_STAGES:
+        if error is None and still_missing:
             error = STAGE_EMPTY_ERROR.get(current, "empty")
             decision.validation_error = error
 
@@ -375,6 +407,8 @@ class ScreeningAgent:
             state.bump(current)
             state.given_up.append(current.value)
             state.flags.append(f"unresolved:{current.value}")
+            decision.validation_error = None
+            decision.events.append({"type": "give_up_field", "payload": {"stage": current.value, "attempts": state.attempts_for(current)}})
 
         target = self._next_required_stage(state)
 

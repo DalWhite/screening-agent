@@ -203,6 +203,11 @@ REENGAGE_MESSAGES: dict[int, dict[str, str]] = {
     },
 }
 
+RESUME_MESSAGES: dict[str, str] = {
+    "es": "¡Bienvenido de nuevo! Retomamos justo donde lo dejaste.",
+    "en": "Welcome back! We pick up right where we stopped.",
+}
+
 REPLY_SYSTEM = f"""You are {AGENT_NAME}. {PERSONALITY}
 
 You will be given: the current stage, what you must ask or say, optional FAQ context, and the candidate's last message.
