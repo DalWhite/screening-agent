@@ -207,9 +207,4 @@ def dashboard() -> FileResponse:
     return FileResponse(FRONTEND / "dashboard.html")
 
 
-@app.get("/voice")
-def voice() -> FileResponse:
-    return FileResponse(FRONTEND / "voice.html")
-
-
 app.mount("/static", StaticFiles(directory=FRONTEND / "static"), name="static")

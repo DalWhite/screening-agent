@@ -11,7 +11,6 @@
     <div class="brand">Grupo <span>Sazón</span> · Screening</div>
     <nav>
       <a href="/dashboard">Dashboard</a>
-      <a href="/voice">Voice</a>
     </nav>
   </header>
 
@@ -21,6 +20,12 @@
     <div id="outcome"></div>
     <form class="composer" id="composer">
       <input id="text" type="text" autocomplete="off" placeholder="Escribe tu respuesta…" disabled>
+      <button id="mic" type="button" class="mic" title="Responder por voz" disabled>🎙</button>
+      <select id="mic-lang" title="Idioma del micrófono">
+        <option value="es-ES">ES</option>
+        <option value="en-US">EN</option>
+      </select>
+      <label class="tts-toggle" title="Voz del agente"><input id="tts" type="checkbox"> 🔊</label>
       <button id="send" type="submit" disabled>Enviar</button>
       <button id="end" type="button" class="ghost" disabled>Finalizar</button>
     </form>

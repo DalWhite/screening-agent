@@ -5,8 +5,8 @@
 ```
 frontend/                     backend/
   index.html  chat.js  ──┐    app.py (FastAPI)
-  dashboard.html ────────┼──→  /api/sessions*  /api/analytics  /api/health
-  voice.html  voice.js ──┘       │
+  (text + mic input)     ├──→  /api/sessions*  /api/analytics  /api/health
+  dashboard.html ────────┘       │
                                  ├── screening/agent.py      deterministic stage machine
                                  │     ├── language.py       ES/EN detect + switch
                                  │     ├── guardrails.py     injection/abuse/self-harm/PII
@@ -47,7 +47,7 @@ frontend/                     backend/
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/sessions` | create session (source: chat/voice) |
+| `POST /api/sessions` | create session (source: chat) |
 | `POST /api/sessions/{id}/messages` | candidate turn → reply + decision |
 | `GET /api/sessions/{id}/pending` | poll for re-engagement nudges |
 | `POST /api/sessions/{id}/end` | candidate ends conversation |

@@ -17,9 +17,8 @@ Open:
 
 | URL | What |
 |---|---|
-| `http://127.0.0.1:8000/` | Candidate chat (try it in Spanish or English) |
+| `http://127.0.0.1:8000/` | Candidate chat — text or voice (mic button + TTS toggle, Web Speech API) |
 | `http://127.0.0.1:8000/dashboard` | Recruiter dashboard: live sessions, transcripts, structured JSON, analytics |
-| `http://127.0.0.1:8000/voice` | Voice front-end for the same agent (Web Speech API) |
 
 No model server reachable? Set `LLM_FALLBACK=mock` — the agent runs fully on deterministic templates (demo safety net). Run a second instance for demos without touching your real data:
 
@@ -100,7 +99,7 @@ backend/
   storage/db.py        SQLite persistence
   analytics/metrics.py funnel / drop-off / recovery metrics
   data/                service_areas.json (45 cities), faq.json (26 items)
-frontend/              chat, dashboard, voice (vanilla JS)
+frontend/              chat (text + voice mic + TTS), dashboard (vanilla JS)
 tests/                 pytest suite + evals/
 scripts/               generate_samples.py
 docs/                  process_design.md, architecture.md
