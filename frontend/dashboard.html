@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grupo Sazón — Dashboard de reclutadores</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Grupo <span>Sazón</span> · Dashboard</div>
+    <nav>
+      <a href="/">Candidato</a>
+      <a href="/voice">Voice</a>
+    </nav>
+  </header>
+
+  <main class="dash">
+    <div class="cards" id="cards"></div>
+
+    <div class="bars" id="funnel"></div>
+    <div class="bars" id="dropoffs"></div>
+
+    <div class="filters">
+      <select id="f-status">
+        <option value="">Todos los estados</option>
+        <option value="active">Activos</option>
+        <option value="qualified">Pre-calificados</option>
+        <option value="disqualified">Descalificados</option>
+        <option value="abandoned">Abandonados</option>
+      </select>
+      <select id="f-qualified">
+        <option value="">Calificados: todos</option>
+        <option value="1">Sí</option>
+        <option value="0">No</option>
+      </select>
+      <input id="f-q" type="search" placeholder="Buscar nombre, ciudad, nota…">
+      <button id="refresh" class="ghost" type="button">Actualizar</button>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Candidato</th><th>Ciudad</th><th>Estado</th><th>Turnos</th>
+          <th>Duración</th><th>Re-eng.</th><th>Idiomas</th><th>Última actividad</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+
+    <div id="detail"></div>
+  </main>
+
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>

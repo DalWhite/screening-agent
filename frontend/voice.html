@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grupo Sazón — Voice Screening</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Grupo <span>Sazón</span> · Voice</div>
+    <nav>
+      <a href="/">Chat</a>
+      <a href="/dashboard">Dashboard</a>
+    </nav>
+  </header>
+
+  <main class="voice-wrap">
+    <h2>Entrevista por voz</h2>
+    <p class="voice-status" id="status">Pulsa el micrófono para empezar.</p>
+    <button class="mic-btn" id="mic" title="Hablar">🎙</button>
+    <div>
+      <select id="lang">
+        <option value="es-ES">Español</option>
+        <option value="en-US">English</option>
+      </select>
+      <label><input type="checkbox" id="tts" checked> voz del agente</label>
+    </div>
+    <div class="messages" id="messages" style="text-align:left;margin-top:20px"></div>
+  </main>
+
+  <script src="/static/voice.js"></script>
+</body>
+</html>

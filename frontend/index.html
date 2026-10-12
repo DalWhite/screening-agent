@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grupo Sazón — Screening</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Grupo <span>Sazón</span> · Screening</div>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/voice">Voice</a>
+    </nav>
+  </header>
+
+  <main class="chat-wrap">
+    <div class="stage-chip" id="stage-chip">conectando…</div>
+    <div class="messages" id="messages"></div>
+    <div id="outcome"></div>
+    <form class="composer" id="composer">
+      <input id="text" type="text" autocomplete="off" placeholder="Escribe tu respuesta…" disabled>
+      <button id="send" type="submit" disabled>Enviar</button>
+      <button id="end" type="button" class="ghost" disabled>Finalizar</button>
+    </form>
+  </main>
+
+  <script src="/static/chat.js"></script>
+</body>
+</html>

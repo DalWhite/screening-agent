@@ -1,0 +1,102 @@
+{
+  "generated_for": "Grupo Sazon screening agent evals",
+  "llm": "MockLLM (deterministic; run against live model for LLM evals)",
+  "total": 6,
+  "passed": 6,
+  "results": [
+    {
+      "scenario": "qualified_es_faq",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "qualified",
+      "flags": [],
+      "turns": 9,
+      "qualified": true
+    },
+    {
+      "scenario": "qualified_en_codeswitch",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "qualified",
+      "flags": [],
+      "turns": 8,
+      "qualified": true
+    },
+    {
+      "scenario": "disqualified_no_license",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "disqualified",
+      "flags": [
+        "no_license"
+      ],
+      "turns": 3,
+      "qualified": false
+    },
+    {
+      "scenario": "disqualified_out_of_area",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "disqualified",
+      "flags": [
+        "waitlist_out_of_area",
+        "out_of_area"
+      ],
+      "turns": 5,
+      "qualified": false
+    },
+    {
+      "scenario": "giveup_needs_review",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "abandoned",
+      "flags": [
+        "unresolved:availability",
+        "needs_review"
+      ],
+      "turns": 10,
+      "qualified": false
+    },
+    {
+      "scenario": "abuse_abandoned",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "abandoned",
+      "flags": [
+        "abusive_language"
+      ],
+      "turns": 4,
+      "qualified": false
+    }
+  ]
+}
