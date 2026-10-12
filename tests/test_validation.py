@@ -4,6 +4,7 @@ from backend.screening.schema import Availability, Schedule
 from backend.screening.validation import (
     map_availability,
     map_schedule,
+    map_yes_no,
     parse_date_text,
     parse_years,
     validate_name,
@@ -92,3 +93,23 @@ def test_start_date_accepts_near():
 def test_validate_years():
     assert validate_years(2).ok
     assert not validate_years(-1).ok
+
+
+def test_yes_no_affirmative_variants():
+    for text in ["sí tengo licencia de coche de moto pues", "sí", "yes", "claro que sí", "tengo carnet"]:
+        assert map_yes_no(text) is True, text
+
+
+def test_yes_no_negative_variants():
+    for text in ["no tengo", "no", "none", "no cuento con ella"]:
+        assert map_yes_no(text) is False, text
+
+
+def test_yes_no_first_match_wins():
+    assert map_yes_no("sí no sé") is True
+
+
+def test_yes_no_ambiguous_returns_none():
+    assert map_yes_no("depende") is None
+    assert map_yes_no("quizá más adelante") is None
+    assert map_yes_no("asdf") is None

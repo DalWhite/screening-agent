@@ -1,6 +1,6 @@
 # Needs review — candidate gives up on a field after 3 re-asks
 
-_Session 3ad5bfbc-a23c-4bce-9981-d8d641574779 · language es · today 2026-10-11_
+_Session 092d0606-9c9d-464b-a159-d67fc48d4d04 · language es · today 2026-10-11_
 
 **Marisol:** ¡Hola! Soy Marisol, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?
 

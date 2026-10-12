@@ -36,6 +36,7 @@ from .service_areas import AREAS, ServiceAreas
 from .validation import (
     map_availability,
     map_schedule,
+    map_yes_no,
     parse_date_text,
     parse_years,
     validate_name,
@@ -65,6 +66,17 @@ STAGE_EMPTY_ERROR: dict[Stage, str] = {
     Stage.SCHEDULE: "unknown_schedule",
     Stage.START_DATE: "unparsed_date",
 }
+
+_LEAK_MARKERS = (
+    "FAQ:",
+    "Pending question:",
+    "Question to ask:",
+    "The previous answer was not valid",
+    "Answer the candidate's question",
+    "The screening is finished with outcome",
+    "Set a polite boundary",
+    "Say:",
+)
 
 
 @dataclass
@@ -208,7 +220,7 @@ class ScreeningAgent:
             decision.events.append({"type": "guardrail", "payload": {"reason": "off_topic"}})
             return self._guardrail_reply(state, decision, "off_topic", clean), decision
 
-        self._apply_extraction(state, extraction, decision, today)
+        self._apply_extraction(state, extraction, decision, today, clean)
         closing = self._advance(state, decision)
         if closing is not None:
             return closing, decision
@@ -220,7 +232,7 @@ class ScreeningAgent:
 
     # ---------- extraction -> data ----------
 
-    def _apply_extraction(self, state: SessionState, ex: ExtractionResult, decision: TurnDecision, today: date) -> None:
+    def _apply_extraction(self, state: SessionState, ex: ExtractionResult, decision: TurnDecision, today: date, clean: str) -> None:
         data = state.data
 
         if ex.full_name:
@@ -233,6 +245,11 @@ class ScreeningAgent:
 
         if ex.has_license is not None:
             data.has_license = bool(ex.has_license)
+        elif state.stage is Stage.LICENSE:
+            guess = map_yes_no(clean)
+            if guess is not None:
+                data.has_license = guess
+                decision.events.append({"type": "field_fallback", "payload": {"field": "has_license", "source": "raw_text"}})
 
         if ex.city:
             self._apply_location(state, ex, decision)
@@ -248,6 +265,12 @@ class ScreeningAgent:
                 data.availability = values
             else:
                 decision.validation_error = "unknown_availability"
+        if not data.availability and state.stage is Stage.AVAILABILITY:
+            mapped = map_availability(clean)
+            if mapped:
+                data.availability = mapped
+                decision.validation_error = None
+                decision.events.append({"type": "field_fallback", "payload": {"field": "availability", "source": "raw_text"}})
 
         if ex.preferred_schedule:
             try:
@@ -258,6 +281,12 @@ class ScreeningAgent:
                     data.preferred_schedule = sched
                 else:
                     decision.validation_error = "unknown_schedule"
+        if data.preferred_schedule is None and state.stage is Stage.SCHEDULE:
+            sched = map_schedule(clean)
+            if sched:
+                data.preferred_schedule = sched
+                decision.validation_error = None
+                decision.events.append({"type": "field_fallback", "payload": {"field": "preferred_schedule", "source": "raw_text"}})
 
         if ex.experience_years is not None:
             years = ex.experience_years if isinstance(ex.experience_years, int) else parse_years(str(ex.experience_years))
@@ -385,19 +414,25 @@ class ScreeningAgent:
 
     def _answer_question(self, state: SessionState, decision: TurnDecision, ex: ExtractionResult, clean: str) -> str:
         question = ex.candidate_question or clean
-        faq_block, ids = self.faq.context_block(question, lang=state.language.value, k=2)
-        if ids:
+        pending = self._question(state.stage, state)
+        docs = self.faq.search(question, lang=state.language.value, k=2)
+        if docs:
+            ids = [d.id for d in docs]
             decision.rag_used = ids
             state.rag_hits.extend(ids)
             decision.events.append({"type": "rag_hit", "payload": {"ids": ids}})
-            plan = f"Answer the candidate's question using only this FAQ context, then ask them the pending question again.\nFAQ:\n{faq_block}\nPending question: {self._question(state.stage, state)}"
+            faq_block = "\n".join(f"- [{d.id}] {d.answer}" for d in docs)
+            plan = f"Answer the candidate's question using only this FAQ context, then ask them the pending question again.\nFAQ:\n{faq_block}\nPending question: {pending}"
+            fallback = f"{docs[0].answer}\n\n{pending}"
         else:
+            faq_block = ""
             decision.events.append({"type": "rag_miss", "payload": {"q": question[:120]}})
             plan = (
                 "The candidate asked a question that is not in the FAQ. Say you are not sure, offer a recruiter callback, "
-                f"then ask the pending question again: {self._question(state.stage, state)}"
+                f"then ask the pending question again: {pending}"
             )
-        reply = self._phrase(state, decision, plan, clean, faq_block=faq_block)
+            fallback = pending
+        reply = self._phrase(state, decision, plan, clean, fallback=fallback, faq_block=faq_block)
         self._commit(state, reply, decision)
         return reply
 
@@ -418,25 +453,29 @@ class ScreeningAgent:
 
         question = self._question(stage, state)
         if decision.validation_error:
-            template = REASK_MESSAGES.get(decision.validation_error, REASK_MESSAGES["empty"])
-            text = template.get(state.language.value, template["es"])
-            text = text.format(
-                next=question,
-                options=", ".join(self._ambiguous_options(decision)) or "varias ciudades",
-                city=state.data.city or "esa ciudad",
-            )
-            return f"The previous answer was not valid ({decision.validation_error}). Say: {text}"
+            return f"The previous answer was not valid ({decision.validation_error}). Say: {self._template_reply(state, decision)}"
 
         tone = ""
         if decision.sentiment in (Sentiment.FRUSTRATED, Sentiment.CONFUSED):
             tone = "The candidate sounds frustrated or confused: be shorter and warmer, and offer a recruiter callback."
         return f"Ask the candidate the next screening question. {tone}\nQuestion to ask: {question}"
 
+    def _template_reply(self, state: SessionState, decision: TurnDecision) -> str:
+        if decision.validation_error:
+            template = REASK_MESSAGES.get(decision.validation_error, REASK_MESSAGES["empty"])
+            text = template.get(state.language.value, template["es"])
+            return text.format(
+                next=self._question(state.stage, state),
+                options=", ".join(self._ambiguous_options(decision)) or "varias ciudades",
+                city=state.data.city or "esa ciudad",
+            )
+        return self._question(state.stage, state)
+
     def _phrase(self, state: SessionState, decision: TurnDecision, plan: str, clean: str, fallback: Optional[str] = None, faq_block: str = "") -> str:
         if not plan:
-            return fallback or ""
+            return fallback or self._template_reply(state, decision)
         try:
-            return self.llm.generate(
+            reply = self.llm.generate(
                 stage=state.stage,
                 language=state.language.value,
                 sentiment=decision.sentiment,
@@ -447,7 +486,11 @@ class ScreeningAgent:
             )
         except LLMUnavailable:
             state.flags.append("llm_unavailable")
-            return fallback or plan
+            return fallback or self._template_reply(state, decision)
+        if any(marker in reply for marker in _LEAK_MARKERS):
+            decision.events.append({"type": "phrasing_fallback", "payload": {"reason": "prompt_leak"}})
+            return fallback or self._template_reply(state, decision)
+        return reply
 
     def _commit(self, state: SessionState, reply: str, decision: TurnDecision) -> None:
         state.history.append({"role": "assistant", "content": reply})

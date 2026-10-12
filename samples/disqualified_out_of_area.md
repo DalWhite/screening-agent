@@ -1,6 +1,6 @@
 # Disqualified — city outside service areas after one retry (waitlist)
 
-_Session 24b37041-61c3-4a1e-a3db-00cb6639680c · language es · today 2026-10-11_
+_Session bc31df92-d8dd-45a2-b452-cee4a1bf7198 · language es · today 2026-10-11_
 
 **Marisol:** ¡Hola! Soy Marisol, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?
 
@@ -70,6 +70,6 @@ _Stage: location → disqualified_
     "waitlist_out_of_area",
     "out_of_area"
   ],
-  "generated_at": "2026-10-12T16:43:24.050593Z"
+  "generated_at": "2026-10-12T18:55:09.286734Z"
 }
 ```

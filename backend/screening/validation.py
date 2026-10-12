@@ -53,6 +53,25 @@ def validate_name(text: str) -> FieldResult:
     return FieldResult(True, raw[:100])
 
 
+_NO_RE = re.compile(r"\b(no|none|negativo|ninguna|ninguno|nunca|do not|dont|don't|negative|nada)\b")
+_YES_RE = re.compile(r"\b(si|yes|yep|yeah|yup|sip|claro|correcto|afirmativo|por supuesto|tengo|cuento|dispongo|of course)\b")
+
+
+def map_yes_no(text: str) -> Optional[bool]:
+    norm = normalize(text)
+    if not norm:
+        return None
+    no_m = _NO_RE.search(norm)
+    yes_m = _YES_RE.search(norm)
+    if no_m and yes_m:
+        return yes_m.start() < no_m.start()
+    if no_m:
+        return False
+    if yes_m:
+        return True
+    return None
+
+
 def map_availability(text: str) -> list[Availability]:
     norm = normalize(text)
     out: list[Availability] = []

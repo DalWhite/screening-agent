@@ -2,9 +2,30 @@ from datetime import date
 
 from backend.llm.client import MockLLM
 from backend.screening.agent import ScreeningAgent
-from backend.screening.schema import Stage
+from backend.screening.schema import ExtractionResult, Intent, Schedule, Stage
 
 TODAY = date(2026, 10, 11)
+
+
+class NullAt(MockLLM):
+    """MockLLM that returns an empty ANSWER extraction for the given stages,
+    forcing the agent to fall back to deterministic raw-text mapping."""
+
+    def __init__(self, stages: set[Stage]):
+        self.null_stages = stages
+
+    def extract(self, history: list[dict], stage: Stage, today: date) -> ExtractionResult:
+        if stage in self.null_stages:
+            return ExtractionResult(intent=Intent.ANSWER)
+        return super().extract(history, stage, today)
+
+
+class LeakLLM(MockLLM):
+    """MockLLM that echoes the phrasing plan verbatim, like the live model
+    sometimes does. The agent's leak guard must catch it."""
+
+    def generate(self, stage, language, sentiment, plan, faq_block, candidate_message, state) -> str:
+        return plan
 
 
 def run(messages, language=None):
@@ -107,3 +128,38 @@ def test_messages_after_close_ignored():
     agent.process(state, "adiós", today=TODAY)
     _, decision = agent.process(state, "hola de nuevo", today=TODAY)
     assert any(e["type"] == "ignored_after_close" for e in decision.events)
+
+
+def test_license_raw_text_fallback():
+    agent = ScreeningAgent(NullAt({Stage.LICENSE}))
+    state = agent.new_session()
+    agent.opening(state)
+    agent.process(state, "hola", today=TODAY)
+    agent.process(state, "Pedro Sánchez", today=TODAY)
+    _, decision = agent.process(state, "sí tengo licencia de coche de moto pues", today=TODAY)
+    assert state.data.has_license is True
+    assert any(e["type"] == "field_fallback" for e in decision.events)
+    assert state.stage is Stage.LOCATION
+
+
+def test_schedule_raw_text_fallback():
+    agent = ScreeningAgent(NullAt({Stage.SCHEDULE}))
+    state = agent.new_session()
+    agent.opening(state)
+    for msg in ["hola", "Pedro Sánchez", "sí", "Madrid, Centro", "jornada completa"]:
+        agent.process(state, msg, today=TODAY)
+    _, decision = agent.process(state, "flexible", today=TODAY)
+    assert state.data.preferred_schedule is Schedule.FLEXIBLE
+    assert decision.validation_error is None
+    assert any(e["type"] == "field_fallback" for e in decision.events)
+
+
+def test_phrasing_leak_guard():
+    agent = ScreeningAgent(LeakLLM())
+    state = agent.new_session()
+    agent.opening(state)
+    _, decision = agent.process(state, "hola", today=TODAY)
+    reply = agent.process(state, "Pedro Sánchez", today=TODAY)[0]
+    assert "Question to ask" not in reply
+    assert "The previous answer was not valid" not in reply
+    assert any(e["type"] == "phrasing_fallback" for e in decision.events)

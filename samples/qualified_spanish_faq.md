@@ -1,6 +1,6 @@
 # Qualified candidate (ES) — asks a pay question answered from the FAQ
 
-_Session 6c73817d-ab36-42fc-8e8f-f3fd714ca72a · language es · today 2026-10-11_
+_Session 4464c08c-a02b-44be-920c-78e421a48e69 · language es · today 2026-10-11_
 
 **Marisol:** ¡Hola! Soy Marisol, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?
 
@@ -107,6 +107,6 @@ _Stage: start_date → qualified_
     "Laura Jiménez Ortiz — Madrid (Malasaña), ES — jornada completa — turno mañana — 2 años de experiencia (glovo) — disponible desde 2026-11-02 — licencia de conducir vigente"
   ],
   "flags": [],
-  "generated_at": "2026-10-12T16:43:24.039681Z"
+  "generated_at": "2026-10-12T18:55:09.275999Z"
 }
 ```

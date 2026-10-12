@@ -1,6 +1,6 @@
 # Disqualified — no driver's license (soft landing with bike-courier waitlist)
 
-_Session 4ccfc163-3207-434c-a13f-785e7fc0c99c · language es · today 2026-10-11_
+_Session 5de56462-e2a6-4a08-86d9-a86c4a2d60d7 · language es · today 2026-10-11_
 
 **Marisol:** ¡Hola! Soy Marisol, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?
 
@@ -58,6 +58,6 @@ _Stage: license → disqualified_
   "flags": [
     "no_license"
   ],
-  "generated_at": "2026-10-12T16:43:24.046530Z"
+  "generated_at": "2026-10-12T18:55:09.282810Z"
 }
 ```

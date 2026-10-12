@@ -1,6 +1,6 @@
 # Qualified candidate (EN→ES code-switch mid-conversation)
 
-_Session 33e94473-1a8a-4145-8189-00cfc9193644 · language es · today 2026-10-11_
+_Session 4edbeb7b-b112-4322-bae0-ecae02de1c26 · language es · today 2026-10-11_
 
 **Marisol:** ¡Hola! Soy Marisol, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?
 
@@ -100,6 +100,6 @@ _Stage: start_date → qualified_
     "Daniel O'Brien — Valencia (Ruzafa), ES — full-time — flexible schedule — 1 yrs experience (uber eats) — available from 2026-11-15 — valid driving license"
   ],
   "flags": [],
-  "generated_at": "2026-10-12T16:43:24.044904Z"
+  "generated_at": "2026-10-12T18:55:09.281182Z"
 }
 ```

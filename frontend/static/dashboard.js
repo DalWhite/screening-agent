@@ -69,7 +69,7 @@ async function loadSessions() {
     tr.className = "clickable";
     const tag = STATUS_TAG[s.status] || "";
     tr.innerHTML = `
-      <td>${d.candidate_name || "(sin nombre)"}<br><span class="pill">${s.id.slice(0, 8)}</span></td>
+      <td>${d.full_name || "(sin nombre)"}<br><span class="pill">${s.id.slice(0, 8)}</span></td>
       <td>${d.city || "—"}${d.country ? " · " + d.country : ""}</td>
       <td><span class="tag ${tag}" style="${tag ? "" : "background:var(--panel-2);color:var(--muted)"}">${s.status}</span></td>
       <td>${s.candidate_turns}</td>
