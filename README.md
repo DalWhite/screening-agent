@@ -1,8 +1,8 @@
-# Grupo Sazón — AI Candidate Screening Agent
+#AI Candidate Screening Agent
 
-An AI screening agent for **Grupo Sazón** (45 restaurant locations, Spain & Mexico) that pre-screens delivery-courier candidates in a natural Spanish/English conversation, extracts structured data, validates it against hard hiring rules, and hands recruiters a clean, ranked pipeline with analytics.
+An AI screening agent  that pre-screens delivery-courier candidates in a natural Spanish/English conversation, extracts structured data, validates it against hard hiring rules, and hands recruiters a clean, ranked pipeline with analytics.
 
-Built for the Orbio FDE technical assignment. See `docs/process_design.md` (process design + Mermaid flow diagram) and `docs/architecture.md` (technical design + Mermaid component map and turn sequence diagram).
+See `docs/process_design.md` (process design + Mermaid flow diagram) and `docs/architecture.md` (technical design + Mermaid component map and turn sequence diagram).
 
 ## Quick start
 
