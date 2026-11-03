@@ -101,6 +101,7 @@ class SessionState:
     rag_hits: list[str] = field(default_factory=list)
     completed_stages: list[str] = field(default_factory=list)
     source: str = "web"
+    contact: Optional[str] = None
     summary: Optional[dict] = None
     dropped_at: Optional[str] = None
 
@@ -127,8 +128,9 @@ class ScreeningAgent:
 
     # ---------- entry points ----------
 
-    def new_session(self, source: str = "web", language: Optional[str] = None) -> SessionState:
-        state = SessionState(id=str(uuid.uuid4()), source=source)
+    def new_session(self, source: str = "web", language: Optional[str] = None,
+                    contact: Optional[str] = None) -> SessionState:
+        state = SessionState(id=str(uuid.uuid4()), source=source, contact=contact)
         if language in ("es", "en"):
             state.language = Lang(language)
         return state

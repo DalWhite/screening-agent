@@ -5,18 +5,20 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .analytics import metrics
+from .channels import TwilioProvider, VoiceChannel, WhatsAppChannel
 from .config import settings
 from .llm.client import build_llm
 from .reengagement import ReengagementMonitor
 from .screening.agent import ScreeningAgent, SessionState
 from .screening.guardrails import redact_pii, screen_input
-from .screening.schema import Lang, ScreeningData, Stage, TurnDecision
+from .screening.schema import Stage, TurnDecision
+from .session_store import SessionStore
 from .storage import db
 
 log = logging.getLogger("sazon.app")
@@ -25,67 +27,42 @@ ROOT = Path(__file__).resolve().parent.parent
 FRONTEND = ROOT / "frontend"
 
 agent: ScreeningAgent | None = None
-registry: dict[str, SessionState] = {}
+store = SessionStore()
+registry = store.registry  # shared in-memory session registry
 monitor: ReengagementMonitor | None = None
+twilio_provider: TwilioProvider | None = None
+whatsapp_channel: WhatsAppChannel | None = None
+voice_channel: VoiceChannel | None = None
 
 
-def _parse_ts(value: str) -> datetime:
-    dt = datetime.fromisoformat(value)
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
-
-def _state_from_row(row: dict) -> SessionState | None:
-    try:
-        data = ScreeningData(**(row.get("data") or {}))
-    except Exception:
-        return None
-    state = SessionState(
-        id=row["id"],
-        stage=Stage(row["stage"]),
-        data=data,
-        language=Lang(row["language"]),
-        status=row["status"],
-        source=row["source"],
-        started_at=_parse_ts(row["started_at"]),
-        reengage_attempts=row["reengage_attempts"],
-        flags=list(row.get("flags") or []),
-        notes=list(row.get("notes") or []),
-        given_up=list(row.get("given_up") or []),
-        languages_seen=list(row.get("languages") or []),
-        rag_hits=list(row.get("rag_hits") or []),
-        summary=row.get("summary"),
-        dropped_at=row.get("dropped_at_stage") or (row.get("summary") or {}).get("dropped_at_stage"),
-    )
-    full = db.get_session(row["id"]) or {}
-    state.history = [{"role": m["role"], "content": m["content"]} for m in full.get("messages", [])]
-    try:
-        state.last_candidate_ts = _parse_ts(row["last_ts"])
-    except ValueError:
-        pass
-    return state
-
-
-def _load_active_sessions() -> None:
-    """Restore active sessions from SQLite so restarts don't orphan candidates."""
-    for row in db.list_sessions(status="active", limit=500):
-        state = _state_from_row(row)
-        if state is None:
-            continue
-        registry[state.id] = state
-    if registry:
-        log.info("restored %d active sessions from storage", len(registry))
+def _nudge_notifier(state: SessionState, text: str) -> bool:
+    """Push re-engagement nudges over the candidate's channel when possible."""
+    if whatsapp_channel is not None and state.source == "whatsapp":
+        return whatsapp_channel.send_outbound(state, text)
+    return False  # web/voice: stored undelivered, picked up via /pending or call-back
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global agent, monitor
+    global agent, monitor, twilio_provider, whatsapp_channel, voice_channel
     db.init_db()
     llm = build_llm()
     agent = ScreeningAgent(llm)
-    _load_active_sessions()
-    monitor = ReengagementMonitor(agent, registry)
+    store.load_active()
+    twilio_provider = TwilioProvider()
+    whatsapp_channel = WhatsAppChannel(agent, store, twilio_provider)
+    voice_channel = VoiceChannel(agent, store)
+    monitor = ReengagementMonitor(agent, registry, notifier=_nudge_notifier)
     await monitor.start()
-    log.info("Sazon screening agent up (llm=%s)", llm.name)
+    log.info("Sazon screening agent up (llm=%s, twilio=%s)", llm.name,
+             "configured" if twilio_provider.configured else "off")
+    if twilio_provider.configured:
+        log.info("twilio channels: whatsapp_from=%s public_base_url=%s signatures=%s sync_timeout=%.0fs",
+                 settings.twilio_whatsapp_from or "<unset: outbound/late replies disabled>",
+                 settings.public_base_url or "<unset: using request host>",
+                 settings.twilio_validate_signatures, settings.whatsapp_sync_timeout)
+        if not settings.twilio_whatsapp_from:
+            log.warning("TWILIO_WHATSAPP_FROM is empty: nudges and late replies cannot be sent")
     yield
     await monitor.stop()
 
@@ -103,13 +80,7 @@ class MessageRequest(BaseModel):
 
 
 def _get_state(session_id: str) -> SessionState:
-    state = registry.get(session_id)
-    if state is None:
-        row = db.get_session(session_id)
-        if row is not None:
-            state = _state_from_row(row)
-            if state is not None:
-                registry[state.id] = state
+    state = store.get(session_id)
     if state is None:
         raise HTTPException(status_code=404, detail="session not found")
     return state
@@ -246,6 +217,93 @@ def list_sessions(
 @app.get("/api/analytics")
 def analytics() -> dict:
     return metrics.compute()
+
+
+# ---------- Twilio channel webhooks (WhatsApp + Voice) ----------
+
+
+async def _twilio_form(request: Request) -> dict[str, str]:
+    """Read Twilio's form-encoded webhook body and enforce signature validation."""
+    assert twilio_provider is not None
+    form = {k: str(v) for k, v in (await request.form()).items()}
+    if settings.public_base_url:
+        query = f"?{request.url.query}" if request.url.query else ""
+        url = f"{settings.public_base_url}{request.url.path}{query}"
+    else:
+        url = str(request.url)
+    signature = request.headers.get("X-Twilio-Signature", "")
+    if not twilio_provider.validate_signature(url, form, signature):
+        log.warning("rejected webhook with invalid Twilio signature: %s", request.url.path)
+        raise HTTPException(status_code=403, detail="invalid Twilio signature")
+    return form
+
+
+def _twiml(xml: str) -> Response:
+    return Response(content=xml, media_type="application/xml")
+
+
+@app.post("/api/channels/whatsapp/inbound")
+async def whatsapp_inbound(request: Request) -> Response:
+    """Twilio WhatsApp webhook: one inbound candidate message per request."""
+    assert whatsapp_channel is not None
+    form = await _twilio_form(request)
+    xml = await whatsapp_channel.handle_inbound_async(form.get("From", ""), form.get("Body", ""))
+    return _twiml(xml)
+
+
+@app.post("/api/channels/voice/inbound")
+async def voice_inbound(request: Request) -> Response:
+    """Twilio Voice webhook: incoming call — greet and start gathering speech."""
+    assert voice_channel is not None
+    form = await _twilio_form(request)
+    xml = voice_channel.handle_call_start(form.get("From", ""), form.get("CallSid", ""))
+    return _twiml(xml)
+
+
+@app.post("/api/channels/voice/collect")
+async def voice_collect(request: Request, session_id: str, retries: int = 0) -> Response:
+    """Twilio Gather action: the candidate's transcribed speech for one turn."""
+    assert voice_channel is not None
+    form = await _twilio_form(request)
+    xml = voice_channel.handle_speech(session_id, form.get("SpeechResult", ""), retries=retries)
+    return _twiml(xml)
+
+
+@app.post("/api/channels/voice/status")
+async def voice_status(request: Request) -> Response:
+    """Twilio status callback: record how the call ended."""
+    assert voice_channel is not None
+    form = await _twilio_form(request)
+    voice_channel.handle_call_ended(form.get("CallSid", ""), form.get("CallStatus", ""))
+    return Response(status_code=204)
+
+
+@app.post("/")
+async def twilio_root_dispatch(request: Request) -> Response:
+    """Safety net for a webhook configured as the bare host URL in the Twilio console.
+
+    Twilio posts form-encoded bodies; we recognise them by shape and route to
+    the right channel. Explicit `/api/channels/...` URLs remain the recommended
+    setup, so this logs a warning pointing at them.
+    """
+    assert whatsapp_channel is not None and voice_channel is not None
+    form = await _twilio_form(request)
+    if "MessageSid" in form or "Body" in form:
+        log.warning("Twilio messaging webhook hit '/': configure %s/api/channels/whatsapp/inbound instead",
+                    settings.public_base_url or "<PUBLIC_BASE_URL>")
+        return _twiml(await whatsapp_channel.handle_inbound_async(form.get("From", ""), form.get("Body", "")))
+    if "CallSid" in form:
+        if form.get("CallStatus") in {"completed", "busy", "failed", "no-answer", "canceled"}:
+            voice_channel.handle_call_ended(form["CallSid"], form["CallStatus"])
+            return Response(status_code=204)
+        log.warning("Twilio voice webhook hit '/': configure %s/api/channels/voice/inbound instead",
+                    settings.public_base_url or "<PUBLIC_BASE_URL>")
+        return _twiml(voice_channel.handle_call_start(form.get("From", ""), form.get("CallSid", "")))
+    raise HTTPException(
+        status_code=404,
+        detail="Not a Twilio webhook. Channel endpoints: /api/channels/whatsapp/inbound, "
+               "/api/channels/voice/inbound, /api/channels/voice/status",
+    )
 
 
 @app.get("/")

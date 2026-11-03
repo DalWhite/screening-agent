@@ -96,7 +96,7 @@ async function openDetail(id) {
   box.appendChild(h);
   const sub = document.createElement("div");
   sub.className = "sub";
-  sub.textContent = `${s.id} · ${s.source} · ${s.language} · ${s.started_at}`;
+  sub.textContent = `${s.id} · ${s.source}${s.contact ? " " + s.contact : ""} · ${s.language} · ${s.started_at}`;
   box.appendChild(sub);
 
   for (const flag of s.flags || []) {

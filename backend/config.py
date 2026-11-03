@@ -46,6 +46,25 @@ class Settings:
     pii_redaction: bool = field(default_factory=lambda: _bool("PII_REDACTION", True))
     retention_days: int = field(default_factory=lambda: _int("RETENTION_DAYS", 90))
 
+    # --- Channels (Twilio WhatsApp + Voice) ---
+    twilio_account_sid: str = field(default_factory=lambda: os.getenv("TWILIO_ACCOUNT_SID", "").strip())
+    twilio_auth_token: str = field(default_factory=lambda: os.getenv("TWILIO_AUTH_TOKEN", "").strip())
+    # Optional: authenticate REST calls with an API key (SK...) instead of the auth token.
+    # Webhook signatures are always verified with the auth token (that is what Twilio signs with).
+    twilio_api_key_sid: str = field(default_factory=lambda: os.getenv("TWILIO_API_KEY_SID", "").strip())
+    twilio_api_key_secret: str = field(default_factory=lambda: os.getenv("TWILIO_API_KEY_SECRET", "").strip())
+    twilio_whatsapp_from: str = field(default_factory=lambda: os.getenv("TWILIO_WHATSAPP_FROM", "").strip())
+    # Approved Content Template (HX...) used for business-initiated pushes (re-engagement nudges)
+    # when WhatsApp refuses free-form text: template-only senders or outside the 24h window.
+    twilio_whatsapp_content_sid: str = field(default_factory=lambda: os.getenv("TWILIO_WHATSAPP_CONTENT_SID", "").strip())
+    twilio_validate_signatures: bool = field(default_factory=lambda: _bool("TWILIO_VALIDATE_SIGNATURES", True))
+    public_base_url: str = field(default_factory=lambda: os.getenv("PUBLIC_BASE_URL", "").rstrip("/"))
+    voice_tts_voice: str = field(default_factory=lambda: os.getenv("VOICE_TTS_VOICE", ""))
+    voice_max_silence_retries: int = field(default_factory=lambda: _int("VOICE_MAX_SILENCE_RETRIES", 2))
+    whatsapp_char_limit: int = field(default_factory=lambda: _int("WHATSAPP_CHAR_LIMIT", 1500))
+    # Twilio drops webhooks after 15s; answer within this budget or deliver the reply via REST.
+    whatsapp_sync_timeout: float = field(default_factory=lambda: float(os.getenv("WHATSAPP_SYNC_TIMEOUT_SECONDS", "10")))
+
     data_dir: Path = ROOT / "backend" / "data"
     root_dir: Path = ROOT
 

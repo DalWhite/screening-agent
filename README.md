@@ -20,6 +20,8 @@ Open:
 | `http://127.0.0.1:8000/` | Candidate chat — text or voice (mic button + TTS toggle, Web Speech API) |
 | `http://127.0.0.1:8000/dashboard` | Recruiter dashboard: live sessions, transcripts, structured JSON, analytics |
 
+Beyond the web chat, candidates can reach the same agent over **WhatsApp and phone calls** (Twilio): see `docs/channels.md` for the 2-minute Twilio console setup. Without Twilio credentials the app still runs web-only.
+
 No model server reachable? Set `LLM_FALLBACK=mock` — the agent runs fully on deterministic templates (demo safety net). Run a second instance for demos without touching your real data:
 
 ```bash
@@ -54,15 +56,18 @@ Key properties:
 - **RAG** — BM25 over a 26-item bilingual FAQ; answers only from retrieved context, with the FAQ id logged per turn.
 - **Re-engagement & resume** — background monitor nudges silent candidates at 45s/120s, closes as `abandoned(silence)` at 300s; recovery rate is tracked in analytics. An abandoned session can be **resumed with its session id within 48h** (`RESUME_WINDOW_HOURS`): the chat restores the transcript and the agent re-asks the exact question the candidate dropped. Qualified/disqualified decisions stay final.
 - **Storage** — SQLite (sessions/messages/events), full conversation history, structured summary per session, REST API for a future ATS integration.
+- **Channels** — the same agent answers on the web chat, on **WhatsApp** and on **phone calls** via Twilio (`backend/channels/`). Channel sessions are keyed by phone number: an active screening continues across messages/calls, abandoned ones resume within 48h, and WhatsApp re-engagement nudges are pushed through the Twilio REST API. Webhooks are signature-validated. Details: `docs/channels.md`.
 
 ## Tests & evals
 
 ```bash
-python -m pytest tests/ -q        # 66 unit/scenario tests
+python -m pytest tests/ -q        # 125 unit/scenario tests (incl. WhatsApp/voice channels)
 python tests/evals/run_evals.py   # 6 end-to-end conversation evals -> tests/evals/report.json
 ```
 
 Evals cover: qualified ES + FAQ question, qualified EN code-switching, disqualified (no licence), disqualified (out of area + waitlist), give-up → `needs_review` flags, abusive input → abandoned.
+
+Channel tests (`tests/test_channels_*.py`, `tests/test_channel_webhooks.py`, `tests/test_twilio_provider.py`) mock every external service — the LLM and the Twilio REST client — and post webhooks exactly the way Twilio does (form-encoded + `X-Twilio-Signature`); no test opens a network connection.
 
 ## Sample conversations
 
@@ -80,10 +85,11 @@ Evals cover: qualified ES + FAQ question, qualified EN code-switching, disqualif
 
 ## Improvement ideas (next iteration)
 
-- Phone/SMS/WhatsApp channel — 60% of candidates don't answer calls; the agent should reach them where they are.
+- Outbound-first outreach: let the agent initiate the WhatsApp message / call from an ATS candidate list (inbound WhatsApp + voice via Twilio are done — see `docs/channels.md`).
+- Streaming STT/TTS (Twilio Media Streams) for lower-latency voice with barge-in, replacing the `<Gather>`/`<Say>` turn loop.
+- SMS fallback for candidates without WhatsApp (same `BaseChannel` contract).
 - Embedding-based retrieval + query rewriting once the FAQ grows past a few hundred items.
 - ATS write-back (Greenhouse/Lever APIs) and a recruiter ranking score trained on interview outcomes.
-- Voice with real telephony (Twilio + streaming STT/TTS) instead of browser Web Speech.
 - Continuous evals in CI against a live model, plus drift monitoring on extraction accuracy.
 - Multilingual beyond ES/EN (Catalan, Galician, Portuguese) for Spain/LatAm coverage.
 
@@ -91,9 +97,12 @@ Evals cover: qualified ES + FAQ question, qualified EN code-switching, disqualif
 
 ```
 backend/
-  app.py               FastAPI app + REST API
+  app.py               FastAPI app + REST API + Twilio webhooks
   config.py            .env-driven settings
-  reengagement.py      silence monitor (nudges / abandonment)
+  session_store.py     in-memory registry backed by SQLite (by id or phone number)
+  reengagement.py      silence monitor (nudges / abandonment, pushes over WhatsApp)
+  channels/            twilio_provider.py (SDK wrapper + webhook signatures),
+                       whatsapp.py, voice.py, base.py (shared session lifecycle)
   llm/client.py        OpenAI-compatible client, tool-call extraction, MockLLM fallback
   screening/           agent.py (stage machine), schema.py, prompts.py, validation.py,
                        language.py, guardrails.py, service_areas.py, rag.py
@@ -102,7 +111,7 @@ backend/
   data/                service_areas.json (45 cities), faq.json (26 items)
 frontend/              chat (text + voice mic + TTS), dashboard (vanilla JS)
 tests/                 pytest suite + evals/
-scripts/               generate_samples.py
-docs/                  process_design.md, architecture.md
+scripts/               generate_samples.py, check_twilio.py (credential/config diagnostics)
+docs/                  process_design.md, architecture.md, channels.md
 samples/               generated transcripts
 ```

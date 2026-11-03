@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     stage TEXT NOT NULL,
     language TEXT NOT NULL DEFAULT 'es',
     source TEXT NOT NULL DEFAULT 'web',
+    contact TEXT,
     started_at TEXT NOT NULL,
     last_ts TEXT NOT NULL,
     qualified INTEGER,
@@ -53,6 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_ts ON sessions(last_ts);
+CREATE INDEX IF NOT EXISTS idx_sessions_contact ON sessions(source, contact);
 """
 
 
@@ -75,8 +77,18 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive migrations for databases created before the channel work."""
+    tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "sessions" in tables:
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}
+        if "contact" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN contact TEXT")
+
+
 def init_db() -> None:
     with get_conn() as conn:
+        _migrate(conn)
         conn.executescript(_SCHEMA)
 
 
@@ -101,13 +113,14 @@ def save_session(state: Any) -> None:
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO sessions (id, status, stage, language, source, started_at, last_ts,
+            INSERT INTO sessions (id, status, stage, language, source, contact, started_at, last_ts,
                 qualified, outcome, disqualify_reason, dropped_at_stage, duration_seconds,
                 candidate_turns, reengage_attempts, data_json, summary_json, flags_json,
                 notes_json, languages_json, given_up_json, rag_hits_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 status=excluded.status, stage=excluded.stage, language=excluded.language,
+                contact=excluded.contact,
                 last_ts=excluded.last_ts, qualified=excluded.qualified, outcome=excluded.outcome,
                 disqualify_reason=excluded.disqualify_reason, dropped_at_stage=excluded.dropped_at_stage,
                 duration_seconds=excluded.duration_seconds, candidate_turns=excluded.candidate_turns,
@@ -118,6 +131,7 @@ def save_session(state: Any) -> None:
             """,
             (
                 state.id, state.status, state.stage.value, state.language.value, state.source,
+                getattr(state, "contact", None),
                 state.started_at.isoformat(), _now(),
                 summary.get("qualified"), summary.get("outcome"), summary.get("disqualify_reason"),
                 summary.get("dropped_at_stage"), summary.get("duration_seconds"),
@@ -203,6 +217,16 @@ def list_sessions(status: Optional[str] = None, qualified: Optional[bool] = None
     params.append(limit)
     with get_conn() as conn:
         return [_row_to_session(r) for r in conn.execute(sql, params)]
+
+
+def find_session_by_contact(source: str, contact: str) -> Optional[dict[str, Any]]:
+    """Latest session for a channel identity (e.g. a WhatsApp number), newest first."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM sessions WHERE source=? AND contact=? ORDER BY last_ts DESC, started_at DESC LIMIT 1",
+            (source, contact),
+        ).fetchone()
+        return _row_to_session(row) if row is not None else None
 
 
 def active_sessions_idle(seconds: int) -> list[dict[str, Any]]:

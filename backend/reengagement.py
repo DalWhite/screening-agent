@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable, Optional
 
 from .config import settings
 from .screening.agent import SessionState
@@ -21,12 +21,16 @@ class ReengagementMonitor:
 
     Nudges are stored as undelivered assistant messages; the frontend fetches
     them via GET /api/sessions/{id}/pending, so re-engagement works even if the
-    candidate closed the tab.
+    candidate closed the tab. Push channels (WhatsApp) register a `notifier`
+    callback: when it reports the nudge as delivered, the message is stored as
+    delivered instead of queued.
     """
 
-    def __init__(self, agent: Any, registry: dict[str, SessionState]):
+    def __init__(self, agent: Any, registry: dict[str, SessionState],
+                 notifier: Optional[Callable[[SessionState, str], bool]] = None):
         self.agent = agent
         self.registry = registry
+        self.notifier = notifier
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
@@ -69,10 +73,16 @@ class ReengagementMonitor:
         text = messages.get(state.language.value) or messages["es"]
         state.reengage_attempts = attempt
         state.history.append({"role": "assistant", "content": text})
-        db.append_message(state.id, "assistant", text, state.stage.value, delivered=False)
+        pushed = False
+        if self.notifier is not None:
+            try:
+                pushed = bool(self.notifier(state, text))
+            except Exception:
+                log.exception("nudge push failed for session %s", state.id)
+        db.append_message(state.id, "assistant", text, state.stage.value, delivered=pushed)
         db.set_reengage_attempts(state.id, attempt)
-        db.append_events(state.id, [{"type": "reengage_nudge", "payload": {"attempt": attempt, "idle_seconds": int((datetime.now(timezone.utc) - state.last_candidate_ts).total_seconds())}}], state.stage.value)
-        log.info("re-engagement nudge %d for session %s", attempt, state.id)
+        db.append_events(state.id, [{"type": "reengage_nudge", "payload": {"attempt": attempt, "pushed": pushed, "idle_seconds": int((datetime.now(timezone.utc) - state.last_candidate_ts).total_seconds())}}], state.stage.value)
+        log.info("re-engagement nudge %d for session %s (pushed=%s)", attempt, state.id, pushed)
 
     def _close_abandoned(self, state: SessionState) -> None:
         decision = TurnDecision(stage_before=state.stage, stage_after=state.stage)
