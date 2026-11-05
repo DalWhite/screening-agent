@@ -1,13 +1,11 @@
 from datetime import date
 
-from backend.screening.schema import Availability, Schedule
+from backend.screening.profile import get_profile
 from backend.screening.validation import (
-    map_availability,
-    map_schedule,
     map_yes_no,
     parse_date_text,
     parse_experience_fallback,
-    parse_platforms,
+    parse_tags,
     parse_years,
     validate_name,
     validate_start_date,
@@ -15,6 +13,25 @@ from backend.screening.validation import (
 )
 
 TODAY = date(2026, 10, 11)
+
+# Availability / schedule keyword maps now live in the delivery profile as choice options.
+_COURIER = get_profile("delivery_courier")
+_AVAILABILITY = _COURIER.question("availability")
+_SCHEDULE = _COURIER.question("schedule")
+_PLATFORMS = _COURIER.question("experience").tags
+
+
+def map_availability(text):
+    return _AVAILABILITY.handler.match(_AVAILABILITY, text)
+
+
+def map_schedule(text):
+    hits = _SCHEDULE.handler.match(_SCHEDULE, text)
+    return hits[0] if hits else None
+
+
+def parse_platforms(text):
+    return parse_tags(text, _PLATFORMS)
 
 
 def test_name_valid():
@@ -32,15 +49,15 @@ def test_name_rejects_too_short():
 
 def test_availability_full_time_variants():
     for text in ["jornada completa", "tengo disponibilidad completa", "full time", "todo el día"]:
-        assert Availability.FULL_TIME in map_availability(text), text
+        assert "full_time" in map_availability(text), text
 
 
 def test_availability_part_time():
-    assert map_availability("medio tiempo") == [Availability.PART_TIME]
+    assert map_availability("medio tiempo") == ["part_time"]
 
 
 def test_availability_weekends():
-    assert map_availability("solo fines de semana") == [Availability.WEEKENDS]
+    assert map_availability("solo fines de semana") == ["weekends"]
 
 
 def test_availability_unknown():
@@ -48,10 +65,10 @@ def test_availability_unknown():
 
 
 def test_schedule_variants():
-    assert map_schedule("por la mañana") is Schedule.MORNING
-    assert map_schedule("tarde") is Schedule.AFTERNOON
-    assert map_schedule("noche") is Schedule.EVENING
-    assert map_schedule("me da igual") is Schedule.FLEXIBLE
+    assert map_schedule("por la mañana") == "morning"
+    assert map_schedule("tarde") == "afternoon"
+    assert map_schedule("noche") == "evening"
+    assert map_schedule("me da igual") == "flexible"
 
 
 def test_schedule_unknown():
@@ -73,7 +90,7 @@ def test_parse_platforms():
 
 
 def test_experience_fallback():
-    years, platforms = parse_experience_fallback("sí en globo un año y en uber eats 2 años")
+    years, platforms = parse_experience_fallback("sí en globo un año y en uber eats 2 años", _PLATFORMS)
     assert years == 2 and platforms == ["glovo", "uber eats"]
     assert parse_experience_fallback("no tengo experiencia")[0] == 0
     assert parse_experience_fallback("sí")[0] == 0
@@ -87,6 +104,15 @@ def test_parse_date_iso():
 
 def test_parse_date_slash():
     assert parse_date_text("15/11/2026", TODAY) == date(2026, 11, 15)
+
+
+def test_parse_date_spanish_relative():
+    # regression: "en 2 semanas" used to fall through to fuzzy parsing and became the 2nd of the month
+    assert parse_date_text("puedo empezar en 2 semanas", TODAY) == date(2026, 10, 25)
+    assert parse_date_text("dentro de 3 días", TODAY) == date(2026, 10, 14)
+    assert parse_date_text("en un mes", TODAY) == date(2026, 11, 10)
+    assert parse_date_text("in 2 weeks", TODAY) == date(2026, 10, 25)
+    assert parse_date_text("cuanto antes", TODAY) == date(2026, 10, 12)
 
 
 def test_parse_date_next_week():

@@ -1,0 +1,528 @@
+{
+  "id": "delivery_courier",
+  "version": "2026-10",
+  "active": true,
+  "company": "Grupo Sazón",
+  "sector": "delivery",
+  "role": {
+    "es": "Repartidor/a (conductor)",
+    "en": "Delivery courier (driver)"
+  },
+  "summary": {
+    "es": "Reparto de última milla en 45 ciudades de España y México. Jornada completa, media o fines de semana.",
+    "en": "Last-mile delivery in 45 cities across Spain and Mexico. Full-time, part-time or weekends."
+  },
+  "persona": {
+    "agent_name": "Marisol",
+    "personality": "Screening assistant for Grupo Sazón delivery couriers. Warm, direct, street-level. Uses \"tu\" in Spanish, plain \"you\" in English. No corporate tone. Short messages: 1-2 sentences, max ~240 characters. One question at a time. Never lectures. Patient with messy answers, never judges the candidate. Honest about what happens next.",
+    "context": "45 cities in Spain and Mexico"
+  },
+  "languages": [
+    "es",
+    "en"
+  ],
+  "default_language": "es",
+  "intro": {
+    "es": [
+      "¡Hola! Soy {name}, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?",
+      "Hola, soy {name} de Grupo Sazón. Esto dura unos 4 minutos y luego un reclutador te llama. ¿Te parece bien?"
+    ],
+    "en": [
+      "Hi! I'm {name} from Grupo Sazón. Seven quick questions, about 4 minutes. Ready?",
+      "Hi, {name} here from Grupo Sazón. This takes about 4 minutes, then a recruiter calls you. Sound good?"
+    ]
+  },
+  "messages": {
+    "qualified": {
+      "es": "Encajas para el puesto. Un reclutador te llamará en 24-48h para la entrevista de 15 minutos. ¡Gracias por tu tiempo!",
+      "en": "You're a fit for the role. A recruiter will call you within 24-48h for the 15-minute interview. Thanks for your time!"
+    },
+    "review": {
+      "es": "Terminamos. Un reclutador revisa tu caso y te contacta en 24-48h.",
+      "en": "We're done here. A recruiter will review your case and contact you within 24-48h."
+    },
+    "resume": {
+      "es": "¡Bienvenido de nuevo! Retomamos justo donde lo dejaste.",
+      "en": "Welcome back! We pick up right where we stopped."
+    },
+    "reengage": {
+      "1": {
+        "es": "¿Sigues ahí? Solo faltan un par de preguntas y te dejo listo para la entrevista.",
+        "en": "Still there? Just a couple of questions left and you're set for the interview."
+      },
+      "2": {
+        "es": "Te dejo la conversación abierta hasta mañana. Si retomas, continúa donde lo dejaste.",
+        "en": "I'll keep this open until tomorrow. If you come back, we pick up right where we stopped."
+      }
+    }
+  },
+  "questions": [
+    {
+      "id": "name",
+      "field": "full_name",
+      "type": "name",
+      "label": {
+        "es": "Nombre",
+        "en": "Name"
+      },
+      "description": "Candidate full name if stated.",
+      "prompts": {
+        "es": [
+          "¿Cuál es tu nombre completo?",
+          "Primero: nombre y apellido, como aparecen en tu documento."
+        ],
+        "en": [
+          "What's your full name?",
+          "First: your first and last name, as it appears on your ID."
+        ]
+      }
+    },
+    {
+      "id": "license",
+      "field": "has_license",
+      "type": "yes_no",
+      "label": {
+        "es": "Licencia de conducir",
+        "en": "Driving licence"
+      },
+      "description": "True if they have a valid driving licence.",
+      "prompts": {
+        "es": [
+          "¿Tienes licencia de conducir vigente? Sí o no.",
+          "Siguiente: ¿tienes carnet de conducir en regla? Sí o no."
+        ],
+        "en": [
+          "Do you have a valid driving licence? Yes or no.",
+          "Next: do you have a valid driving licence? Yes or no."
+        ]
+      },
+      "reask": {
+        "unclear_yes_no": {
+          "es": "Necesito un sí o un no claro: ¿tienes licencia de conducir?",
+          "en": "I need a clear yes or no: do you have a driving licence?"
+        }
+      }
+    },
+    {
+      "id": "location",
+      "field": "city",
+      "type": "location",
+      "label": {
+        "es": "Ciudad / zona",
+        "en": "City / area"
+      },
+      "description": "City they live in, as they said it.",
+      "prompts": {
+        "es": [
+          "¿En qué ciudad y barrio repartirías?",
+          "¿Dónde vives? Ciudad y barrio o colonia, para ver si tenemos zona."
+        ],
+        "en": [
+          "Which city and neighbourhood would you deliver in?",
+          "Where do you live? City plus barrio or colonia, so I can check our zones."
+        ]
+      },
+      "reask": {
+        "out_of_area": {
+          "es": "Ahora mismo no operamos en {value}. ¿Tienes otra ciudad cercana de nuestra lista o te apunto a lista de espera?",
+          "en": "We don't operate in {value} right now. Is there another city of ours nearby, or shall I put you on the waitlist?"
+        }
+      }
+    },
+    {
+      "id": "availability",
+      "field": "availability",
+      "type": "multi_choice",
+      "label": {
+        "es": "Disponibilidad",
+        "en": "Availability"
+      },
+      "description": "Working availability.",
+      "prompts": {
+        "es": [
+          "¿Qué disponibilidad tienes: jornada completa, medio tiempo o solo fines de semana?",
+          "¿Puedes trabajar a tiempo completo, medio tiempo o solo fines de semana?"
+        ],
+        "en": [
+          "What availability do you have: full-time, part-time or weekends only?",
+          "Could you work full-time, part-time or weekends only?"
+        ]
+      },
+      "options": [
+        {
+          "value": "full_time",
+          "label": {
+            "es": "Jornada completa",
+            "en": "Full-time"
+          },
+          "keywords": [
+            "full time",
+            "fulltime",
+            "jornada completa",
+            "tiempo completo",
+            "completo",
+            "completa",
+            "full",
+            "todo el dia",
+            "40 horas"
+          ]
+        },
+        {
+          "value": "part_time",
+          "label": {
+            "es": "Medio tiempo",
+            "en": "Part-time"
+          },
+          "keywords": [
+            "part time",
+            "parttime",
+            "medio tiempo",
+            "media jornada",
+            "parcial",
+            "part time only",
+            "medio"
+          ]
+        },
+        {
+          "value": "weekends",
+          "label": {
+            "es": "Fines de semana",
+            "en": "Weekends"
+          },
+          "keywords": [
+            "weekend",
+            "weekends",
+            "fin de semana",
+            "fines de semana",
+            "finde",
+            "findes",
+            "sabado y domingo",
+            "saturday",
+            "sunday",
+            "solo fines"
+          ]
+        }
+      ],
+      "reask": {
+        "unknown_option": {
+          "es": "Dime una de las tres: jornada completa, medio tiempo o solo fines de semana.",
+          "en": "Pick one of the three: full-time, part-time or weekends only."
+        }
+      }
+    },
+    {
+      "id": "schedule",
+      "field": "preferred_schedule",
+      "type": "choice",
+      "label": {
+        "es": "Turno preferido",
+        "en": "Preferred shift"
+      },
+      "description": "Preferred shift.",
+      "prompts": {
+        "es": [
+          "¿Qué turno prefieres: mañana, tarde, noche o flexible?",
+          "Turno preferido: ¿mañana, tarde, noche o me da igual?"
+        ],
+        "en": [
+          "Preferred shift: morning, afternoon, evening or flexible?",
+          "Which shift do you prefer: morning, afternoon, evening or flexible?"
+        ]
+      },
+      "options": [
+        {
+          "value": "morning",
+          "label": {
+            "es": "Mañana",
+            "en": "Morning"
+          },
+          "keywords": [
+            "morning",
+            "mornings",
+            "manana",
+            "mananas",
+            "matinal",
+            "9 a 14",
+            "9-14",
+            "am"
+          ]
+        },
+        {
+          "value": "afternoon",
+          "label": {
+            "es": "Tarde",
+            "en": "Afternoon"
+          },
+          "keywords": [
+            "afternoon",
+            "afternoons",
+            "tarde",
+            "tardes",
+            "14 a 19",
+            "14-19",
+            "pm"
+          ]
+        },
+        {
+          "value": "evening",
+          "label": {
+            "es": "Noche",
+            "en": "Evening"
+          },
+          "keywords": [
+            "evening",
+            "evenings",
+            "noche",
+            "noches",
+            "night",
+            "nights",
+            "19 a 23",
+            "19-23"
+          ]
+        },
+        {
+          "value": "flexible",
+          "label": {
+            "es": "Flexible",
+            "en": "Flexible"
+          },
+          "keywords": [
+            "flexible",
+            "indistinto",
+            "cualquier turno",
+            "any",
+            "me da igual",
+            "cualquiera",
+            "flex"
+          ]
+        }
+      ],
+      "reask": {
+        "unknown_option": {
+          "es": "Elige turno: mañana, tarde, noche o flexible.",
+          "en": "Pick a shift: morning, afternoon, evening or flexible."
+        }
+      }
+    },
+    {
+      "id": "experience",
+      "field": "experience_years",
+      "type": "experience",
+      "required": false,
+      "label": {
+        "es": "Experiencia en reparto",
+        "en": "Delivery experience"
+      },
+      "description": "Years of delivery experience.",
+      "prompts": {
+        "es": [
+          "¿Has repartido antes? ¿Cuántos años y en qué plataformas (Glovo, Uber Eats, Deliveroo...)?",
+          "Experiencia previa repartiendo? Años y plataformas, si las hay."
+        ],
+        "en": [
+          "Have you delivered before? How many years and on which platforms (Glovo, Uber Eats, Deliveroo...)?",
+          "Any prior delivery experience? Years and platforms, if any."
+        ]
+      },
+      "min": 0,
+      "max": 50,
+      "tags_field": "experience_platforms",
+      "tags": {
+        "glovo": [
+          "globo"
+        ],
+        "uber eats": [
+          "ubereats",
+          "uber"
+        ],
+        "deliveroo": [],
+        "just eat": [
+          "justeat"
+        ],
+        "stuart": [],
+        "wolt": [],
+        "rappi": [],
+        "didi food": [],
+        "riders": [
+          "rider"
+        ]
+      },
+      "reask": {
+        "unparsed_years": {
+          "es": "¿Cuántos años repartiendo? Si ninguno, di 0.",
+          "en": "How many years delivering? If none, say 0."
+        },
+        "range": {
+          "es": "Ese número no tiene sentido. ¿Cuántos años exactamente?",
+          "en": "That number doesn't make sense. How many years exactly?"
+        }
+      }
+    },
+    {
+      "id": "start_date",
+      "field": "start_date",
+      "type": "date",
+      "label": {
+        "es": "Fecha de inicio",
+        "en": "Start date"
+      },
+      "description": "Earliest start date.",
+      "max_days_ahead": 180,
+      "prompts": {
+        "es": [
+          "¿Desde qué fecha podrías empezar?",
+          "Última pregunta: ¿cuándo podrías empezar a trabajar?"
+        ],
+        "en": [
+          "From which date could you start?",
+          "Last question: when could you start working?"
+        ]
+      },
+      "reask": {
+        "too_far": {
+          "es": "Buscamos gente para los próximos 6 meses. ¿Cuándo podrías empezar como máximo?",
+          "en": "We're hiring for the next 6 months. What's the latest you could start?"
+        }
+      }
+    }
+  ],
+  "rules": [
+    {
+      "id": "no_license",
+      "action": "disqualify",
+      "label": {
+        "es": "Sin licencia de conducir",
+        "en": "No driving licence"
+      },
+      "field": "has_license",
+      "op": "eq",
+      "value": false,
+      "message": {
+        "es": "Gracias por decirmelo. Para este puesto de conductor necesitamos licencia, así que no puedo seguir adelante. Si prefieres repartir en bici, te dejo en lista de espera.",
+        "en": "Thanks for being straight with me. This is a driver role, so without a licence I can't take it forward. If you'd rather deliver by bike, I can put you on the bike waitlist."
+      }
+    },
+    {
+      "id": "out_of_area",
+      "action": "disqualify",
+      "label": {
+        "es": "Fuera de zona de reparto",
+        "en": "Outside delivery area"
+      },
+      "on_error": "out_of_area",
+      "question": "location",
+      "after_attempts": 1,
+      "flags": [
+        "waitlist_out_of_area"
+      ],
+      "message": {
+        "es": "Gracias por tu tiempo. No tenemos zona de reparto ahí ahora mismo, así que cierro esta candidatura y te apunto a la lista de espera para cuando abramos.",
+        "en": "Thanks for your time. We have no delivery zone there right now, so I'm closing this application and adding you to the expansion waitlist."
+      }
+    },
+    {
+      "id": "license_not_verified",
+      "action": "flag",
+      "label": {
+        "es": "Carnet no verificado",
+        "en": "Licence not verified"
+      },
+      "field": "license_check",
+      "op": "eq",
+      "value": "invalid",
+      "flags": [
+        "license_not_verified"
+      ],
+      "review": true,
+      "note": "El reclutador no pudo verificar el carnet de conducir."
+    }
+  ],
+  "scoring": [
+    {
+      "field": "availability",
+      "label": {
+        "es": "Jornada completa",
+        "en": "Full-time"
+      },
+      "op": "contains",
+      "value": "full_time",
+      "points": 30
+    },
+    {
+      "field": "availability",
+      "label": {
+        "es": "Medio tiempo",
+        "en": "Part-time"
+      },
+      "op": "contains",
+      "value": "part_time",
+      "points": 15
+    },
+    {
+      "field": "preferred_schedule",
+      "label": {
+        "es": "Turno flexible",
+        "en": "Flexible shift"
+      },
+      "op": "eq",
+      "value": "flexible",
+      "points": 20
+    },
+    {
+      "field": "preferred_schedule",
+      "label": {
+        "es": "Turno concreto",
+        "en": "Specific shift"
+      },
+      "op": "in",
+      "value": [
+        "morning",
+        "afternoon",
+        "evening"
+      ],
+      "points": 10
+    },
+    {
+      "field": "experience_years",
+      "label": {
+        "es": "Años de experiencia (10/año)",
+        "en": "Years of experience (10/yr)"
+      },
+      "per_unit": 10,
+      "max_points": 30
+    },
+    {
+      "field": "start_date",
+      "label": {
+        "es": "Incorporación en 7 días",
+        "en": "Can start within 7 days"
+      },
+      "op": "within_days",
+      "value": 7,
+      "points": 20
+    }
+  ],
+  "faq_file": "faq.json",
+  "service_areas_file": "service_areas.json",
+  "checks": [
+    {
+      "id": "license_check",
+      "label": {
+        "es": "Comprobación del carnet",
+        "en": "Licence check"
+      },
+      "provider": "manual",
+      "trigger": "license",
+      "inputs": [
+        "full_name"
+      ],
+      "when": {
+        "field": "has_license",
+        "op": "eq",
+        "value": true
+      },
+      "blocking": false,
+      "timeout_seconds": 1209600
+    }
+  ]
+}

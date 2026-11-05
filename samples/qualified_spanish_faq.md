@@ -1,6 +1,6 @@
 # Qualified candidate (ES) — asks a pay question answered from the FAQ
 
-_Session 4464c08c-a02b-44be-920c-78e421a48e69 · language es · today 2026-10-11_
+_Profile delivery_courier (Grupo Sazón) · session e8a49df0-0743-4ee9-b509-ac47f9e373c7 · language es · today 2026-10-11_
 
 **Marisol:** ¡Hola! Soy Marisol, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?
 
@@ -60,15 +60,19 @@ _Stage: experience → start_date_
 
 _Stage: start_date → qualified_
 
+_Async check license_check: error (No se recibió ningún número de documento)_
+
 ---
 
-**Final stage:** qualified · **flags:** —
+**Final stage:** qualified · **flags:** ['check_error:license_check']
 
 ```json
 {
+  "profile_id": "delivery_courier",
   "qualified": true,
   "outcome": "qualified",
   "disqualify_reason": null,
+  "close_reason": null,
   "completed_stages": [
     "intro",
     "name",
@@ -101,12 +105,14 @@ _Stage: start_date → qualified_
     "experience_platforms": [
       "glovo"
     ],
-    "start_date": "2026-11-02"
+    "start_date": "2026-11-02",
+    "license_check": "pending"
   },
+  "score": 80.0,
   "recruiter_notes": [
-    "Laura Jiménez Ortiz — Madrid (Malasaña), ES — jornada completa — turno mañana — 2 años de experiencia (glovo) — disponible desde 2026-11-02 — licencia de conducir vigente"
+    "Laura Jiménez Ortiz — Licencia de conducir ✓ — Madrid (Malasaña), ES — Jornada completa — Mañana — 2 años (glovo) — desde 2026-11-02"
   ],
   "flags": [],
-  "generated_at": "2026-10-12T18:55:09.275999Z"
+  "generated_at": "2026-11-04T14:18:53.309258Z"
 }
 ```

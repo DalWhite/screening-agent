@@ -33,19 +33,24 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def detect_language(text: str) -> Lang:
-    """Cheap, deterministic first-pass language detection (no LLM round-trip)."""
+def detect_language(text: str, default: Lang = Lang.ES) -> Lang:
+    """Cheap, deterministic first-pass language detection (no LLM round-trip).
+
+    ``default`` is returned when the text carries no language evidence (a bare
+    name, a city, a number): pass the conversation language so that answering
+    "John Smith" in an English screening does not flip the reply to Spanish.
+    """
     if not text or not text.strip():
-        return Lang.ES
+        return default
     tokens = normalize(text).split()
     if not tokens:
-        return Lang.ES
+        return default
     es = sum(1 for t in tokens if t in _ES_MARKERS)
     en = sum(1 for t in tokens if t in _EN_MARKERS)
     if _ES_TOKEN_RE.search(text) or _ACCENT_RE.search(text):
         es += 2
     if es == 0 and en == 0:
-        return Lang.ES
+        return default
     if es == 0:
         return Lang.EN
     if en == 0:

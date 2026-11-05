@@ -1,4 +1,6 @@
-from backend.screening.service_areas import AREAS
+from backend.screening.profile import get_profile
+
+AREAS = get_profile("delivery_courier").areas
 
 
 def test_madrid_exact():
@@ -40,3 +42,15 @@ def test_mexico_city():
 def test_is_service_area_flag():
     assert AREAS.is_service_area("Sevilla")
     assert not AREAS.is_service_area("Ourense")
+
+
+def test_partial_words_do_not_match_cities():
+    # regression: "vale" (as in "vale, Zaragoza") used to fuzzy-match Valencia
+    assert not AREAS.match_city("vale").matched
+
+
+def test_exact_city_beats_partial_zone():
+    construction = get_profile("construction_laborer").areas
+    match = construction.match_city("Malaga")
+    assert match.matched and match.city == "Málaga" and match.zone is None
+    assert construction.match_city("Velez-Malaga").zone == "Velez-Malaga"

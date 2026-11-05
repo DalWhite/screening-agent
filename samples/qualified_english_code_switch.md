@@ -1,8 +1,8 @@
 # Qualified candidate (EN→ES code-switch mid-conversation)
 
-_Session 4edbeb7b-b112-4322-bae0-ecae02de1c26 · language es · today 2026-10-11_
+_Profile delivery_courier (Grupo Sazón) · session b4ebf1ff-fee6-4731-b1bb-d65e4bf4dd20 · language en · today 2026-10-11_
 
-**Marisol:** ¡Hola! Soy Marisol, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?
+**Marisol:** Hi! I'm Marisol from Grupo Sazón. Seven quick questions, about 4 minutes. Ready?
 
 **Candidate:** Hi, I'd like to apply as a courier
 
@@ -12,7 +12,7 @@ _Stage: intro → name_
 
 **Candidate:** Daniel O'Brien
 
-**Marisol:** ¿Tienes licencia de conducir vigente? Sí o no.
+**Marisol:** Do you have a valid driving licence? Yes or no.
 
 _Stage: name → license_
 
@@ -24,7 +24,7 @@ _Stage: license → location_
 
 **Candidate:** Valencia, Ruzafa
 
-**Marisol:** ¿Qué disponibilidad tienes: jornada completa, medio tiempo o solo fines de semana?
+**Marisol:** What availability do you have: full-time, part-time or weekends only?
 
 _Stage: location → availability_
 
@@ -52,15 +52,19 @@ _Stage: experience → start_date_
 
 _Stage: start_date → qualified_
 
+_Async check license_check: error (No se recibió ningún número de documento)_
+
 ---
 
-**Final stage:** qualified · **flags:** —
+**Final stage:** qualified · **flags:** ['check_error:license_check']
 
 ```json
 {
+  "profile_id": "delivery_courier",
   "qualified": true,
   "outcome": "qualified",
   "disqualify_reason": null,
+  "close_reason": null,
   "completed_stages": [
     "intro",
     "name",
@@ -94,12 +98,14 @@ _Stage: start_date → qualified_
     "experience_platforms": [
       "uber eats"
     ],
-    "start_date": "2026-11-15"
+    "start_date": "2026-11-15",
+    "license_check": "pending"
   },
+  "score": 60.0,
   "recruiter_notes": [
-    "Daniel O'Brien — Valencia (Ruzafa), ES — full-time — flexible schedule — 1 yrs experience (uber eats) — available from 2026-11-15 — valid driving license"
+    "Daniel O'Brien — Driving licence ✓ — Valencia (Ruzafa), ES — Full-time — Flexible — 1 year (uber eats) — from 2026-11-15"
   ],
   "flags": [],
-  "generated_at": "2026-10-12T18:55:09.281182Z"
+  "generated_at": "2026-11-04T14:18:53.477636Z"
 }
 ```

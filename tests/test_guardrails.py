@@ -34,7 +34,10 @@ def test_phone_redacted():
 
 
 def test_dni_redacted():
-    assert redact_pii("12345678A") == "[id redacted]A"
+    # the whole document (control letter included) is redacted, also NIE and passports
+    assert redact_pii("12345678A") == "[id redacted]"
+    assert redact_pii("mi NIE es X1234567L, gracias") == "mi NIE es [id redacted], gracias"
+    assert redact_pii("pasaporte AAA123456") == "pasaporte [id redacted]"
 
 
 def test_email_redacted():

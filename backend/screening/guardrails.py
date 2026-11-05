@@ -30,6 +30,10 @@ _SELF_HARM = [r"\b(suicide|kill myself|end my life)\b", r"\b(suicidio|matarme|qu
 _CONTACT_REQUEST = [r"\b(human|recruiter|real person|persona real|hablar con alguien|una persona)\b"]
 
 _LONG_DIGITS = re.compile(r"(?<!\d)\d[\d\s-]{6,}\d(?!\d)")
+# identity documents: NIE (X1234567L), DNI (12345678Z, 12.345.678-Z), passports (AAA123456)
+_ID_DOCUMENTS = re.compile(
+    r"(?<![A-Za-z0-9])(?:[XYZxyz][\s.-]?\d{7}[\s.-]?[A-Za-z]|\d{2}\.?\d{3}\.?\d{3}[\s-]?[A-Za-z]|[A-Za-z]{2,3}\d{6,7})(?![A-Za-z0-9])"
+)
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _DATE_LIKE = re.compile(r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.]\d{1,2}[/.]\d{4}")
 
@@ -94,6 +98,7 @@ def redact_pii(text: str) -> str:
         return f"\x00{len(protected) - 1}\x00"
 
     out = _DATE_LIKE.sub(_protect, out)
+    out = _ID_DOCUMENTS.sub("[id redacted]", out)
     out = _LONG_DIGITS.sub("[id redacted]", out)
     for i, value in enumerate(protected):
         out = out.replace(f"\x00{i}\x00", value)

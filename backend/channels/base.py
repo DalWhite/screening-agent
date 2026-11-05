@@ -8,11 +8,10 @@ from typing import Optional
 from ..config import settings
 from ..screening.agent import ScreeningAgent, SessionState
 from ..screening.guardrails import redact_pii, screen_input
-from ..screening.schema import Lang, Stage, TERMINAL_STAGES, TurnDecision
+from ..screening.schema import FINAL_STAGES, Lang, Stage, TERMINAL_STAGES, TurnDecision
 from ..session_store import SessionStore
 from ..storage import db
-
-FINAL_STAGES = {Stage.QUALIFIED, Stage.DISQUALIFIED}
+from .. import verifications
 
 # BCP-47 locales Twilio understands for <Say>/<Gather input="speech">.
 VOICE_LOCALES: dict[str, str] = {"es": "es-ES", "en": "en-US"}
@@ -83,9 +82,11 @@ class BaseChannel:
 
     source = "channel"
 
-    def __init__(self, agent: ScreeningAgent, store: SessionStore):
+    def __init__(self, agent: ScreeningAgent, store: SessionStore, profile_id: Optional[str] = None):
         self.agent = agent
         self.store = store
+        # A phone number reaches one recruiting process (WHATSAPP_PROFILE / VOICE_PROFILE).
+        self.profile_id = profile_id or None
 
     # ---------- session lifecycle ----------
 
@@ -95,32 +96,35 @@ class BaseChannel:
 
         if state is not None and state.status == "active" and state.stage not in TERMINAL_STAGES:
             return ResolvedSession(state=state)
+        if state is not None and state.status == Stage.VERIFYING:
+            return ResolvedSession(state=state)  # decision pending external checks: same conversation
 
         if state is not None and state.status == "abandoned" and state.stage not in FINAL_STAGES:
             age = datetime.now(timezone.utc) - state.last_candidate_ts
             if age <= timedelta(hours=settings.resume_window_hours):
                 reply = self.agent.resume(state)
                 db.save_session(state)
-                db.append_message(state.id, "assistant", reply, state.stage.value)
+                db.append_message(state.id, "assistant", reply, state.stage)
                 db.append_events(
                     state.id,
-                    [{"type": "session_resume", "payload": {"stage": state.stage.value, "channel": self.source}}],
-                    state.stage.value,
+                    [{"type": "session_resume", "payload": {"stage": state.stage, "channel": self.source}}],
+                    state.stage,
                 )
                 return ResolvedSession(state=state, greetings=[reply], resumed=True)
 
         return self._new_session(contact, language)
 
     def _new_session(self, contact: str, language: Optional[str]) -> ResolvedSession:
-        state = self.agent.new_session(source=self.source, language=language, contact=contact)
+        state = self.agent.new_session(source=self.source, language=language, contact=contact,
+                                       profile_id=self.profile_id)
         opening = self.agent.opening(state)
         self.store.put(state)
         db.save_session(state)
-        db.append_message(state.id, "assistant", opening, Stage.INTRO.value)
+        db.append_message(state.id, "assistant", opening, Stage.INTRO)
         db.append_events(
             state.id,
             [{"type": "channel_session_started", "payload": {"channel": self.source}}],
-            Stage.INTRO.value,
+            Stage.INTRO,
         )
         return ResolvedSession(state=state, greetings=[opening], created=True)
 
@@ -128,14 +132,25 @@ class BaseChannel:
 
     def run_turn(self, state: SessionState, text: str) -> tuple[str, TurnDecision]:
         """One agent turn + persistence, identical to the web chat's pipeline."""
-        reply, decision = self.agent.process(state, text)
-        clean = redact_pii(screen_input(text).sanitized)
-        db.save_session(state)
-        db.append_message(state.id, "user", clean, decision.stage_before.value)
-        db.append_message(state.id, "assistant", reply, decision.stage_after.value)
-        db.append_events(state.id, decision.events, decision.stage_after.value)
+        with self.store.lock(state.id):
+            reply, decision = self.agent.process(state, text)
+            persist_turn(state, text, reply, decision)
         return reply, decision
 
     def pending_nudges(self, state: SessionState) -> list[str]:
-        """Undelivered re-engagement nudges queued while the candidate was away."""
+        """Undelivered messages (re-engagement nudges, recruiter messages) queued while the candidate was away."""
         return [m["content"] for m in db.pending_messages(state.id)]
+
+
+def persist_turn(state: SessionState, user_text: str, reply: str, decision: TurnDecision) -> None:
+    """Store one candidate turn (same pipeline for web, WhatsApp and voice).
+
+    During a human takeover the agent stays silent: only the candidate message is stored.
+    """
+    clean = redact_pii(screen_input(user_text).sanitized)
+    db.save_session(state)
+    verifications.dispatch_requests(state, decision)  # external checks: queued now, answered asynchronously
+    db.append_message(state.id, "user", clean, decision.stage_before)
+    if reply:
+        db.append_message(state.id, "assistant", reply, decision.stage_after)
+    db.append_events(state.id, decision.events, decision.stage_after)

@@ -1,11 +1,12 @@
 {
-  "generated_for": "Grupo Sazon screening agent evals",
+  "generated_for": "Screening agent evals (all job profiles)",
   "llm": "MockLLM (deterministic; run against live model for LLM evals)",
-  "total": 6,
-  "passed": 6,
+  "total": 12,
+  "passed": 12,
   "results": [
     {
       "scenario": "qualified_es_faq",
+      "profile": "delivery_courier",
       "passed": true,
       "checks": {
         "stage": true,
@@ -14,12 +15,16 @@
         "no_empty_replies": true
       },
       "stage": "qualified",
-      "flags": [],
+      "flags": [
+        "check_error:license_check"
+      ],
       "turns": 9,
-      "qualified": true
+      "qualified": true,
+      "score": 80.0
     },
     {
       "scenario": "qualified_en_codeswitch",
+      "profile": "delivery_courier",
       "passed": true,
       "checks": {
         "stage": true,
@@ -28,12 +33,16 @@
         "no_empty_replies": true
       },
       "stage": "qualified",
-      "flags": [],
+      "flags": [
+        "check_error:license_check"
+      ],
       "turns": 8,
-      "qualified": true
+      "qualified": true,
+      "score": 55.0
     },
     {
       "scenario": "disqualified_no_license",
+      "profile": "delivery_courier",
       "passed": true,
       "checks": {
         "stage": true,
@@ -46,10 +55,12 @@
         "no_license"
       ],
       "turns": 3,
-      "qualified": false
+      "qualified": false,
+      "score": 0.0
     },
     {
       "scenario": "disqualified_out_of_area",
+      "profile": "delivery_courier",
       "passed": true,
       "checks": {
         "stage": true,
@@ -60,13 +71,16 @@
       "stage": "disqualified",
       "flags": [
         "waitlist_out_of_area",
-        "out_of_area"
+        "out_of_area",
+        "check_error:license_check"
       ],
       "turns": 5,
-      "qualified": false
+      "qualified": false,
+      "score": 0.0
     },
     {
       "scenario": "giveup_needs_review",
+      "profile": "delivery_courier",
       "passed": true,
       "checks": {
         "stage": true,
@@ -77,13 +91,122 @@
       "stage": "abandoned",
       "flags": [
         "unresolved:availability",
-        "needs_review"
+        "needs_review",
+        "check_error:license_check"
       ],
       "turns": 10,
-      "qualified": false
+      "qualified": false,
+      "score": 40.0
+    },
+    {
+      "scenario": "construction_qualified_prl_flag",
+      "profile": "construction_laborer",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "qualified",
+      "flags": [
+        "needs_prl_training"
+      ],
+      "turns": 11,
+      "qualified": true,
+      "score": 75.0
+    },
+    {
+      "scenario": "construction_ppe_question",
+      "profile": "construction_laborer",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "qualified",
+      "flags": [],
+      "turns": 12,
+      "qualified": true,
+      "score": 60.0
+    },
+    {
+      "scenario": "construction_underage",
+      "profile": "construction_laborer",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "disqualified",
+      "flags": [
+        "underage"
+      ],
+      "turns": 3,
+      "qualified": false,
+      "score": 0.0
+    },
+    {
+      "scenario": "construction_no_work_permit",
+      "profile": "construction_laborer",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "disqualified",
+      "flags": [
+        "no_work_permit"
+      ],
+      "turns": 4,
+      "qualified": false,
+      "score": 0.0
+    },
+    {
+      "scenario": "construction_physical_review_en",
+      "profile": "construction_laborer",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "qualified",
+      "flags": [
+        "physical_review"
+      ],
+      "turns": 11,
+      "qualified": true,
+      "score": 80.0
+    },
+    {
+      "scenario": "construction_id_not_in_registry",
+      "profile": "construction_laborer",
+      "passed": true,
+      "checks": {
+        "stage": true,
+        "flags": true,
+        "rag": true,
+        "no_empty_replies": true
+      },
+      "stage": "disqualified",
+      "flags": [
+        "id_not_verified"
+      ],
+      "turns": 6,
+      "qualified": false,
+      "score": 0.0
     },
     {
       "scenario": "abuse_abandoned",
+      "profile": "delivery_courier",
       "passed": true,
       "checks": {
         "stage": true,
@@ -96,7 +219,8 @@
         "abusive_language"
       ],
       "turns": 4,
-      "qualified": false
+      "qualified": false,
+      "score": 0.0
     }
   ]
 }

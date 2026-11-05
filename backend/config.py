@@ -37,6 +37,28 @@ class Settings:
 
     db_path: str = field(default_factory=lambda: os.getenv("DB_PATH", "data/sazon.db"))
 
+    # --- Screening profiles (one folder per recruiting process) ---
+    profiles_dir: Path = field(default_factory=lambda: Path(os.getenv("PROFILES_DIR") or ROOT / "backend" / "data" / "profiles"))
+    default_profile: str = field(default_factory=lambda: os.getenv("DEFAULT_PROFILE", "delivery_courier").strip())
+    # Channels are addressed by phone number, so each one runs a single process (empty = DEFAULT_PROFILE)
+    whatsapp_profile: str = field(default_factory=lambda: os.getenv("WHATSAPP_PROFILE", "").strip())
+    voice_profile: str = field(default_factory=lambda: os.getenv("VOICE_PROFILE", "").strip())
+
+    # --- External checks (asynchronous verifications) ---
+    verification_tick_seconds: float = field(default_factory=lambda: float(os.getenv("VERIFICATION_TICK_SECONDS", "2")))
+    verification_mock_delay_seconds: float = field(default_factory=lambda: float(os.getenv("VERIFICATION_MOCK_DELAY_SECONDS", "5")))
+    verification_webhook_url: str = field(default_factory=lambda: os.getenv("VERIFICATION_WEBHOOK_URL", "").strip())
+    # HMAC-SHA256 secret shared with webhook providers; callbacks are rejected while it is empty
+    verification_webhook_secret: str = field(default_factory=lambda: os.getenv("VERIFICATION_WEBHOOK_SECRET", "").strip())
+    verification_max_attempts: int = field(default_factory=lambda: _int("VERIFICATION_MAX_ATTEMPTS", 3))
+    # Hosts a profile's webhook check may call, besides the host of VERIFICATION_WEBHOOK_URL (comma-separated).
+    # Profiles are edited by recruiters: this keeps candidate data from being sent anywhere else.
+    verification_allowed_hosts: str = field(default_factory=lambda: os.getenv("VERIFICATION_ALLOWED_HOSTS", "").strip())
+
+    # --- Backoffice (recruiter portal). Empty password = open access (local development only) ---
+    backoffice_user: str = field(default_factory=lambda: os.getenv("BACKOFFICE_USER", "recruiter").strip())
+    backoffice_password: str = field(default_factory=lambda: os.getenv("BACKOFFICE_PASSWORD", "").strip())
+
     reengage_first_delay: int = field(default_factory=lambda: _int("REENGAGE_FIRST_DELAY_SECONDS", 45))
     reengage_second_delay: int = field(default_factory=lambda: _int("REENGAGE_SECOND_DELAY_SECONDS", 120))
     reengage_max_attempts: int = field(default_factory=lambda: _int("REENGAGE_MAX_ATTEMPTS", 2))

@@ -1,0 +1,12 @@
+{
+  "version": "2026-11",
+  "note": "Constructora Horizonte active construction sites (Spain). Zones are towns/districts with an active site or within a short commute.",
+  "locations": [
+    {"city": "Madrid", "country": "ES", "aliases": ["madrid capital", "comunidad de madrid"], "zones": ["Valdebebas", "Vallecas", "Villaverde", "Carabanchel", "Usera", "Getafe", "Leganes", "Mostoles", "Alcala de Henares", "Fuenlabrada", "Alcorcon", "Parla", "Torrejon de Ardoz", "Rivas-Vaciamadrid"]},
+    {"city": "Toledo", "country": "ES", "aliases": ["toledo ciudad"], "zones": ["Illescas", "Sesena", "Olias del Rey", "Bargas"]},
+    {"city": "Valencia", "country": "ES", "aliases": ["valencia ciudad", "valència"], "zones": ["Paterna", "Torrent", "Sagunto", "Mislata", "Burjassot", "Manises"]},
+    {"city": "Sevilla", "country": "ES", "aliases": ["seville", "sevilla capital"], "zones": ["Dos Hermanas", "Alcala de Guadaira", "Mairena del Aljarafe", "Bormujos"]},
+    {"city": "Málaga", "country": "ES", "aliases": ["malaga", "malaga capital"], "zones": ["Torremolinos", "Fuengirola", "Marbella", "Velez-Malaga", "Alhaurin de la Torre"]},
+    {"city": "Zaragoza", "country": "ES", "aliases": ["zaragoza capital", "saragossa"], "zones": ["Utebo", "Cuarte de Huerva", "La Muela", "Villanueva de Gallego"]}
+  ]
+}

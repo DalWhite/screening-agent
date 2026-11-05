@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Optional
 
-from ..screening.schema import FLOW
+from ..screening.profile import get_profile, registry
 from ..storage import db
 
 
@@ -11,10 +11,26 @@ def _pct(part: int, total: int) -> float:
     return round(100.0 * part / total, 1) if total else 0.0
 
 
-def compute(sessions: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
-    """Compute recruiter-facing analytics from stored sessions."""
+def _flow(profile_id: Optional[str]) -> list[str]:
+    """Funnel stages: the profile's flow, or the union of every profile's flow (in order)."""
+    if profile_id:
+        return get_profile(profile_id).flow
+    stages: list[str] = []
+    for profile in registry().all():
+        for stage in profile.flow:
+            if stage not in stages:
+                stages.append(stage)
+    # keep the lifecycle end-cap last
+    if "review" in stages:
+        stages.remove("review")
+        stages.append("review")
+    return stages
+
+
+def compute(sessions: Optional[list[dict[str, Any]]] = None, profile_id: Optional[str] = None) -> dict[str, Any]:
+    """Compute recruiter-facing analytics from stored sessions (optionally for one profile)."""
     if sessions is None:
-        sessions = db.list_sessions(limit=1000)
+        sessions = db.list_sessions(limit=5000, profile_id=profile_id)
 
     total = len(sessions)
     active = [s for s in sessions if s["status"] == "active"]
@@ -31,14 +47,19 @@ def compute(sessions: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
 
     completed_sets = [_completed(s) for s in sessions]
     funnel: dict[str, int] = {}
-    for stage in FLOW:
-        funnel[stage.value] = sum(1 for done in completed_sets if stage.value in done)
+    for stage in _flow(profile_id):
+        funnel[stage] = sum(1 for done in completed_sets if stage in done)
     funnel["qualified"] = len(qualified)
 
-    languages = Counter()
+    pipeline = {stage: 0 for stage in db.pipeline_ids()}
     for s in sessions:
-        for lang in s.get("languages") or []:
-            languages[lang] += 1
+        stage = s.get("pipeline_stage")
+        if stage in pipeline:
+            pipeline[stage] += 1
+    scores = [s["score"] for s in sessions if s.get("score") is not None]
+    by_profile = Counter(s.get("profile_id") for s in sessions)
+
+    languages = Counter(s.get("language") for s in sessions if s.get("language"))
 
     reengaged = [s for s in sessions if s["reengage_attempts"] > 0]
     reengaged_recovered = [s for s in reengaged if s["status"] in ("qualified", "disqualified")]
@@ -61,6 +82,7 @@ def compute(sessions: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
         "qualified_rate_pct": _pct(len(qualified), total),
         "disqualified_count": len(disqualified),
         "abandoned_count": len(abandoned),
+        "verifying_count": sum(1 for s in sessions if s["status"] == "verifying"),
         "avg_duration_seconds": round(sum(durations) / len(durations)) if durations else 0,
         "avg_candidate_turns": round(sum(turns) / len(turns), 1) if turns else 0,
         "dropoff_by_stage": dict(dropoffs.most_common()),
@@ -73,10 +95,14 @@ def compute(sessions: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
             "recovery_rate_pct": _pct(len(reengaged_recovered), len(reengaged)),
         },
         "top_rag_hits": dict(rag_counter.most_common(5)),
+        "pipeline": pipeline,
+        "avg_score": round(sum(scores) / len(scores), 1) if scores else None,
+        "by_profile": dict(by_profile),
+        "profile_id": profile_id,
         "flag_counts": dict(flags.most_common(10)),
     }
 
 
 def _completed(session: dict[str, Any]) -> list[str]:
     summary = session.get("summary") or {}
-    return summary.get("completed_stages") or []
+    return summary.get("completed_stages") or session.get("completed_stages") or []

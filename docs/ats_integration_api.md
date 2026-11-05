@@ -1,4 +1,4 @@
-# ATS integration API — Grupo Sazón screening agent
+# ATS integration API — screening agent
 
 The screening service is a plain REST API. An ATS (Greenhouse, Lever, Ashby, or Grupo Sazón's internal tool) integrates by driving sessions and pulling structured results — no scraping, no screen-reading.
 
@@ -10,7 +10,8 @@ ATS webhook (new application)
   → deliver reply via candidate channel (email/SMS/WhatsApp)
   → POST /api/sessions/{id}/messages       relay each candidate reply
   → GET  /api/sessions/{id}/pending        poll for proactive messages (re-engagement nudges)
-  → on status != "active": read summary → create/advance ATS stage
+  → on status not in ("active", "verifying"): read summary → create/advance ATS stage
+    ("verifying" = all answers in, waiting for external checks such as an ID registry)
 ```
 
 ## Endpoints
@@ -18,13 +19,14 @@ ATS webhook (new application)
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/health` | Liveness + model availability + active session count |
-| `POST` | `/api/sessions` | Create session. Body: `{"source": "web|whatsapp|sms|phone|ats", "language": "es|en"}` (language optional — auto-detected). Returns `session_id`, opening `reply`, `stage`, `language` |
+| `GET` | `/api/profiles` | Active recruiting processes (screening profiles) with their question labels |
+| `POST` | `/api/sessions` | Create session. Body: `{"profile_id": "construction_laborer", "source": "web|sms|phone|ats", "language": "es|en"}` (profile optional: `DEFAULT_PROFILE`; language optional: auto-detected). Returns `session_id`, `profile_id`, opening `reply`, `stage`, `language` |
 | `POST` | `/api/sessions/{id}/messages` | Send candidate message. Body: `{"text": "..."}`. Returns `reply`, `stage`, `status`, `language`, `advanced`, `validation_error`, `guardrail`, `rag_used`, and `summary` when the session closes |
 | `GET` | `/api/sessions/{id}/pending` | Undelivered proactive messages (re-engagement nudges). Client polls ~every 15s |
 | `POST` | `/api/sessions/{id}/end` | Candidate-initiated early exit; closes with qualified/abandoned outcome |
-| `GET` | `/api/sessions/{id}` | Full session: metadata, structured `data`, `summary`, full `messages` transcript, `events` audit log |
-| `GET` | `/api/sessions?status=&qualified=&q=&limit=` | Recruiter list: filter by status (`active/qualified/disqualified/abandoned`), qualified flag, free-text `q` (name/city) |
-| `GET` | `/api/analytics` | Funnel, completion/qualified rates, drop-off by stage, disqualify reasons, language mix, re-engagement recovery, top FAQ hits |
+| `GET` | `/api/sessions/{id}` | Session: metadata, structured `data`, `summary`, full `messages` transcript, `events` audit log (recruiter-only data such as tags, owner, notes and score is excluded) |
+| `GET` | `/api/sessions?status=&qualified=&q=&profile_id=&limit=` | Recruiter list (HTTP Basic auth when `BACKOFFICE_PASSWORD` is set): filter by status, qualified flag, process, free-text `q` |
+| `GET` | `/api/analytics?profile_id=` | (auth) Funnel, completion/qualified rates, drop-off by stage, disqualify reasons, language mix, re-engagement recovery, top FAQ hits |
 
 ## The recruiter payload (what an ATS should store)
 
@@ -32,9 +34,11 @@ ATS webhook (new application)
 
 ```json
 {
+  "profile_id": "delivery_courier",
   "qualified": true,
-  "outcome": "qualified | disqualified | abandoned",
-  "disqualify_reason": "no_license | out_of_area | silence | null",
+  "outcome": "qualified | disqualified | abandoned | verifying",
+  "disqualify_reason": "<rule id of the profile, e.g. no_license | out_of_area | underage | no_work_permit> | null",
+  "close_reason": "silence | abusive_language | <rule id> | null",
   "completed_stages": ["intro", "name", "license", "location", "availability", "schedule", "experience", "start_date", "review"],
   "dropped_at_stage": null,
   "duration_seconds": 214,
@@ -49,11 +53,16 @@ ATS webhook (new application)
     "experience_years": 2, "experience_platforms": ["glovo"],
     "start_date": "2026-11-02"
   },
+  "score": 80.0,
   "recruiter_notes": ["Laura Jiménez Ortiz — Madrid (Malasaña), ES — jornada completa — turno mañana — 2 años de experiencia (glovo) — disponible desde 2026-11-02 — licencia de conducir vigente"],
   "flags": ["unresolved:availability", "needs_review", "waitlist_out_of_area", "abusive_language"],
   "generated_at": "2026-10-12T12:42:39Z"
 }
 ```
+
+`data` also contains external check results (e.g. `"id_check": "valid"`) and, for ID questions, only the masked number (`"id_document": "•••••678Z"`). `data` contains every data key of the session's profile (missing answers are `null` / `[]`), so the shape is stable per `profile_id`. The construction profile, for example, returns `is_adult, work_permit, city, zone, country, in_service_area, physical_ok, has_prl_course, construction_experience_years, construction_trades, transport, start_date`. `score` is the 0-100 ranking score of the profile. Fields added in v2 (`profile_id`, `close_reason`, `score`) are additive; v1 consumers keep working.
+
+For richer integrations (pipeline stage, owner, tags, recruiter notes, per-question report), use the backoffice API (`/api/bo/candidates`, see `docs/backoffice.md`). It is authenticated, unlike the candidate-facing session endpoint.
 
 Mapping suggestion: `qualified:true` → ATS stage "Screening passed"; `flags` containing `needs_review` → stage "Needs human review"; `disqualified` → archive with reason tag; `abandoned` → trigger ATS-side re-contact campaign.
 

@@ -35,8 +35,9 @@ class WhatsAppChannel(BaseChannel):
 
     source = "whatsapp"
 
-    def __init__(self, agent: ScreeningAgent, store: SessionStore, provider: TwilioProvider):
-        super().__init__(agent, store)
+    def __init__(self, agent: ScreeningAgent, store: SessionStore, provider: TwilioProvider,
+                 profile_id: Optional[str] = None):
+        super().__init__(agent, store, profile_id)
         self.provider = provider
         self._locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
         self.late_deliveries: set[asyncio.Future] = set()  # in-flight async replies (observable in tests)
@@ -86,11 +87,12 @@ class WhatsAppChannel(BaseChannel):
                 self._record_trigger(state, body)
             elif body:
                 reply, _ = self.run_turn(state, body)
-                replies.append(reply)
+                if reply:  # empty while a recruiter has taken the conversation over
+                    replies.append(reply)
 
         log.info(
             "whatsapp turn session=%s created=%s resumed=%s stage=%s replies=%d chars=%d",
-            state.id, resolved.created, resolved.resumed, state.stage.value,
+            state.id, resolved.created, resolved.resumed, state.stage,
             len(replies), sum(len(r) for r in replies),
         )
         return replies
@@ -101,7 +103,7 @@ class WhatsAppChannel(BaseChannel):
         clean = redact_pii(screen_input(body).sanitized)
         state.history.append({"role": "user", "content": clean})
         state.last_candidate_ts = datetime.now(timezone.utc)
-        db.append_message(state.id, "user", clean, Stage.INTRO.value)
+        db.append_message(state.id, "user", clean, Stage.INTRO)
         db.save_session(state)
 
     def twiml(self, replies: list[str]) -> str:
@@ -150,14 +152,13 @@ class WhatsAppChannel(BaseChannel):
             if sid:
                 log.info("whatsapp outbound sent as template session=%s sid=%s", state.id, sid)
                 db.append_events(state.id, [{"type": "whatsapp_template_fallback",
-                                             "payload": {"content_sid": content_sid}}], state.stage.value)
+                                             "payload": {"content_sid": content_sid}}], state.stage)
                 return True
         return False
 
-    @staticmethod
-    def _template_variables(state: SessionState) -> dict[str, str]:
+    def _template_variables(self, state: SessionState) -> dict[str, str]:
         """{{1}} = candidate first name (or a neutral fallback), {{2}} = agent name."""
-        from ..screening.prompts import AGENT_NAME
-
-        name = (state.data.full_name or "").strip().split(" ")[0]
-        return {"1": name or ("there" if state.language.value == "en" else "hola"), "2": AGENT_NAME}
+        profile = self.agent.profile(state)
+        name_field = profile.field_of_type("name") or "full_name"
+        name = str(state.data.get(name_field) or "").strip().split(" ")[0]
+        return {"1": name or ("there" if state.language.value == "en" else "hola"), "2": profile.persona.agent_name}

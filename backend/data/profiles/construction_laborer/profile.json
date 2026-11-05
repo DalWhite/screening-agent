@@ -1,0 +1,652 @@
+{
+  "id": "construction_laborer",
+  "version": "2026-12",
+  "active": true,
+  "company": "Constructora Horizonte",
+  "sector": "construction",
+  "role": {
+    "es": "Peón / ayudante de obra",
+    "en": "Construction labourer / site helper"
+  },
+  "summary": {
+    "es": "Peones y ayudantes para obras en Madrid, Toledo, Valencia, Sevilla, Málaga y Zaragoza. Sin experiencia previa; formación PRL incluida.",
+    "en": "Labourers and site helpers for projects in Madrid, Toledo, Valencia, Seville, Malaga and Zaragoza. No experience needed; safety training included."
+  },
+  "persona": {
+    "agent_name": "Andrés",
+    "personality": "Recruiting assistant for Constructora Horizonte construction sites. Friendly, plain-spoken and practical, like a good site foreman. Uses \"tu\" in Spanish, plain \"you\" in English. Very short, simple sentences (many candidates read on a phone between shifts or have limited literacy): 1-2 sentences, max ~200 characters. One question at a time. Never uses jargon without explaining it. Never judges the candidate's background or experience.",
+    "context": "construction sites in Madrid, Toledo, Valencia, Seville, Malaga and Zaragoza (Spain)"
+  },
+  "languages": [
+    "es",
+    "en"
+  ],
+  "default_language": "es",
+  "intro": {
+    "es": [
+      "¡Hola! Soy {name}, de Constructora Horizonte. Buscamos peones y ayudantes de obra, no hace falta experiencia. Son 10 preguntas cortas, unos 3 minutos. ¿Empezamos?",
+      "Hola, soy {name} de Constructora Horizonte. Te hago unas preguntas rápidas para el puesto de peón de obra y luego te llama un encargado. ¿Vale?"
+    ],
+    "en": [
+      "Hi! I'm {name} from Constructora Horizonte. We're hiring construction labourers, no experience needed. 10 short questions, about 3 minutes. Shall we start?",
+      "Hi, {name} here from Constructora Horizonte. A few quick questions for the site labourer job, then a site manager calls you. OK?"
+    ]
+  },
+  "messages": {
+    "qualified": {
+      "es": "¡Perfecto, cumples los requisitos! Un encargado te llamará en 24-48h para concretar la obra y el día de incorporación. ¡Gracias!",
+      "en": "Great, you meet the requirements! A site manager will call you within 24-48h to agree the site and your start day. Thanks!"
+    },
+    "review": {
+      "es": "Listo. Un reclutador revisa tu caso y te llama en 24-48h.",
+      "en": "All done. A recruiter will review your case and call you within 24-48h."
+    },
+    "resume": {
+      "es": "¡Hola de nuevo! Seguimos donde lo dejamos.",
+      "en": "Welcome back! Let's carry on where we left off."
+    },
+    "reengage": {
+      "1": {
+        "es": "¿Sigues ahí? Quedan pocas preguntas y te ponemos en contacto con el encargado.",
+        "en": "Still there? Only a few questions left and we'll put you in touch with the site manager."
+      },
+      "2": {
+        "es": "Te dejo la conversación abierta. Cuando vuelvas, seguimos donde lo dejamos.",
+        "en": "I'll leave this open. When you come back, we'll continue where we stopped."
+      }
+    },
+    "handback": {
+      "es": "Gracias por esperar. Sigo yo con las preguntas.",
+      "en": "Thanks for waiting. I'll carry on with the questions."
+    }
+  },
+  "questions": [
+    {
+      "id": "name",
+      "field": "full_name",
+      "type": "name",
+      "label": {
+        "es": "Nombre",
+        "en": "Name"
+      },
+      "description": "Candidate full name if stated.",
+      "prompts": {
+        "es": [
+          "¿Cómo te llamas? Nombre y apellido.",
+          "Primero, tu nombre y apellido, por favor."
+        ],
+        "en": [
+          "What's your name? First and last name.",
+          "First, your first and last name, please."
+        ]
+      }
+    },
+    {
+      "id": "adult",
+      "field": "is_adult",
+      "type": "yes_no",
+      "number_threshold": 18,
+      "label": {
+        "es": "Mayor de edad",
+        "en": "Aged 18+"
+      },
+      "description": "True if the candidate is 18 or older. If they give an age, true when it is 18 or more.",
+      "prompts": {
+        "es": [
+          "¿Eres mayor de 18 años?",
+          "Para trabajar en obra hay que ser mayor de edad: ¿tienes 18 años o más?"
+        ],
+        "en": [
+          "Are you 18 or older?",
+          "Site work requires being an adult: are you 18 or over?"
+        ]
+      },
+      "reask": {
+        "unclear_yes_no": {
+          "es": "Solo necesito un sí o un no: ¿tienes 18 años o más?",
+          "en": "Just a yes or no: are you 18 or over?"
+        }
+      }
+    },
+    {
+      "id": "work_permit",
+      "field": "work_permit",
+      "type": "yes_no",
+      "label": {
+        "es": "Permiso de trabajo",
+        "en": "Right to work"
+      },
+      "description": "True if the candidate is legally allowed to work in Spain (Spanish/EU ID, or NIE with work authorisation).",
+      "prompts": {
+        "es": [
+          "¿Tienes permiso para trabajar en España (DNI, o NIE con autorización de trabajo)? Sí o no.",
+          "¿Puedes trabajar legalmente en España? Sí o no."
+        ],
+        "en": [
+          "Are you allowed to work in Spain (Spanish/EU ID, or NIE with work permit)? Yes or no.",
+          "Can you legally work in Spain? Yes or no."
+        ]
+      },
+      "reask": {
+        "unclear_yes_no": {
+          "es": "Necesito un sí o un no: ¿tienes permiso de trabajo en España?",
+          "en": "I need a yes or no: do you have the right to work in Spain?"
+        }
+      }
+    },
+    {
+      "id": "id_document",
+      "field": "id_document",
+      "type": "id_document",
+      "documents": [
+        "dni",
+        "nie",
+        "passport"
+      ],
+      "label": {
+        "es": "Documento de identidad",
+        "en": "ID document"
+      },
+      "description": "Spanish DNI / NIE or passport number (read deterministically, never by the model).",
+      "prompts": {
+        "es": [
+          "Para darte de alta tenemos que verificar tu documento. ¿Me dices tu DNI, NIE o pasaporte? Solo lo usamos para esa verificación.",
+          "¿Cuál es el número de tu DNI, NIE o pasaporte?"
+        ],
+        "en": [
+          "To register you we need to verify your ID. What's your DNI, NIE or passport number? It's only used for that check.",
+          "What's your DNI, NIE or passport number?"
+        ]
+      },
+      "reask": {
+        "invalid_id": {
+          "es": "Eso no parece un DNI, NIE o pasaporte. Escríbelo así: 12345678Z o X1234567L.",
+          "en": "That doesn't look like a DNI, NIE or passport. Type it like 12345678Z or X1234567L."
+        },
+        "invalid_id_checksum": {
+          "es": "La letra no coincide con el número. ¿Puedes revisarlo?",
+          "en": "The letter doesn't match the number. Could you check it?"
+        }
+      }
+    },
+    {
+      "id": "location",
+      "field": "city",
+      "type": "location",
+      "label": {
+        "es": "Ciudad / zona",
+        "en": "City / area"
+      },
+      "description": "City or town where the candidate lives or can work, as they said it.",
+      "prompts": {
+        "es": [
+          "¿En qué ciudad o zona vives? Tenemos obras en Madrid, Toledo, Valencia, Sevilla, Málaga y Zaragoza.",
+          "¿Dónde vives? Ciudad y barrio o pueblo, para ver qué obra te queda cerca."
+        ],
+        "en": [
+          "Which city or area do you live in? We have sites in Madrid, Toledo, Valencia, Seville, Malaga and Zaragoza.",
+          "Where do you live? City plus district or town, so I can find a site near you."
+        ]
+      },
+      "reask": {
+        "out_of_area": {
+          "es": "Ahora mismo no tenemos obras en {value}. ¿Podrías trabajar en Madrid, Toledo, Valencia, Sevilla, Málaga o Zaragoza?",
+          "en": "We don't have sites in {value} right now. Could you work in Madrid, Toledo, Valencia, Seville, Malaga or Zaragoza?"
+        }
+      }
+    },
+    {
+      "id": "physical",
+      "field": "physical_ok",
+      "type": "yes_no",
+      "label": {
+        "es": "Trabajo físico",
+        "en": "Physical work"
+      },
+      "description": "True if the candidate can do physical work: carrying materials up to 25 kg and standing most of the shift.",
+      "prompts": {
+        "es": [
+          "El trabajo es físico: cargar material de hasta 25 kg y estar de pie buena parte de la jornada. ¿Puedes hacerlo sin problema?",
+          "¿Te ves bien para cargar peso (hasta 25 kg) y estar de pie casi toda la jornada?"
+        ],
+        "en": [
+          "The job is physical: carrying materials up to 25 kg and standing most of the shift. Is that OK for you?",
+          "Are you comfortable carrying up to 25 kg and standing for most of the shift?"
+        ]
+      }
+    },
+    {
+      "id": "prl",
+      "field": "has_prl_course",
+      "type": "yes_no",
+      "required": false,
+      "label": {
+        "es": "Curso PRL 20h",
+        "en": "20h safety course (PRL)"
+      },
+      "description": "True if the candidate already holds the 20-hour construction health & safety course (PRL / TPC).",
+      "prompts": {
+        "es": [
+          "¿Tienes el curso de PRL de 20 horas (prevención de riesgos en obra)? Si no, no pasa nada: te lo damos nosotros.",
+          "¿Tienes ya la tarjeta o el curso de PRL de construcción? Sí o no."
+        ],
+        "en": [
+          "Do you have the 20-hour construction safety course (PRL)? If not, no problem: we provide it.",
+          "Do you already hold the construction safety (PRL) course or card? Yes or no."
+        ]
+      }
+    },
+    {
+      "id": "experience",
+      "field": "construction_experience_years",
+      "type": "experience",
+      "required": false,
+      "label": {
+        "es": "Experiencia en obra",
+        "en": "Construction experience"
+      },
+      "description": "Years of experience in construction or a building trade (0 if none).",
+      "prompts": {
+        "es": [
+          "¿Has trabajado antes en obra o en algún oficio (albañilería, pintura, encofrado...)? ¿Cuántos años? Si no, di 0.",
+          "¿Experiencia en construcción? Años y oficios, si los hay. Si ninguna, di 0."
+        ],
+        "en": [
+          "Have you worked in construction or a trade before (bricklaying, painting, formwork...)? How many years? If not, say 0.",
+          "Any construction experience? Years and trades, if any. If none, say 0."
+        ]
+      },
+      "min": 0,
+      "max": 50,
+      "tags_field": "construction_trades",
+      "tags": {
+        "albañilería": [
+          "albañil",
+          "albanil",
+          "paleta",
+          "ladrillo",
+          "bricklaying",
+          "bricklayer",
+          "masonry",
+          "mason"
+        ],
+        "encofrado": [
+          "encofrador",
+          "formwork"
+        ],
+        "ferralla": [
+          "ferrallista",
+          "rebar"
+        ],
+        "pintura": [
+          "pintor",
+          "painting",
+          "painter"
+        ],
+        "fontanería": [
+          "fontanero",
+          "plumbing",
+          "plumber"
+        ],
+        "electricidad": [
+          "electricista",
+          "electrical",
+          "electrician"
+        ],
+        "carpintería": [
+          "carpintero",
+          "carpentry",
+          "carpenter"
+        ],
+        "demolición": [
+          "demoliciones",
+          "demolition"
+        ],
+        "solado y alicatado": [
+          "solador",
+          "alicatado",
+          "alicatador",
+          "azulejos",
+          "tiling",
+          "tiler"
+        ],
+        "pladur y escayola": [
+          "pladur",
+          "escayola",
+          "escayolista",
+          "drywall",
+          "plasterer",
+          "plastering"
+        ],
+        "peón / ayudante": [
+          "peon",
+          "peón",
+          "ayudante",
+          "labourer",
+          "laborer",
+          "helper"
+        ]
+      },
+      "reask": {
+        "unparsed_years": {
+          "es": "¿Cuántos años en obra? Si ninguno, di 0.",
+          "en": "How many years in construction? If none, say 0."
+        }
+      }
+    },
+    {
+      "id": "transport",
+      "field": "transport",
+      "type": "choice",
+      "label": {
+        "es": "Transporte a obra",
+        "en": "Transport to site"
+      },
+      "description": "How the candidate would get to the construction site.",
+      "prompts": {
+        "es": [
+          "Las obras empiezan a las 7:00 y cambian de sitio. ¿Cómo irías: vehículo propio o transporte público?",
+          "¿Cómo llegarías a la obra a las 7:00: coche o moto propia, o transporte público?"
+        ],
+        "en": [
+          "Sites start at 7:00 and move around. How would you get there: your own vehicle or public transport?",
+          "How would you get to site for 7:00: own car or motorbike, or public transport?"
+        ]
+      },
+      "options": [
+        {
+          "value": "own_vehicle",
+          "label": {
+            "es": "Vehículo propio",
+            "en": "Own vehicle"
+          },
+          "keywords": [
+            "coche",
+            "moto",
+            "furgoneta",
+            "vehiculo propio",
+            "vehiculo",
+            "carro",
+            "car",
+            "motorbike",
+            "van",
+            "own vehicle",
+            "drive",
+            "conduzco"
+          ]
+        },
+        {
+          "value": "public_transport",
+          "label": {
+            "es": "Transporte público",
+            "en": "Public transport"
+          },
+          "keywords": [
+            "transporte publico",
+            "autobus",
+            "bus",
+            "metro",
+            "tren",
+            "cercanias",
+            "public transport",
+            "train",
+            "subway"
+          ]
+        },
+        {
+          "value": "none",
+          "label": {
+            "es": "Sin medio propio",
+            "en": "No transport"
+          },
+          "keywords": [
+            "a pie",
+            "andando",
+            "caminando",
+            "no tengo",
+            "ninguno",
+            "me llevan",
+            "walk",
+            "walking",
+            "lift",
+            "no car",
+            "nothing"
+          ]
+        }
+      ],
+      "reask": {
+        "unknown_option": {
+          "es": "Dime cómo irías: vehículo propio, transporte público o ninguno.",
+          "en": "Tell me how you'd get there: own vehicle, public transport or none."
+        }
+      }
+    },
+    {
+      "id": "start_date",
+      "field": "start_date",
+      "type": "date",
+      "label": {
+        "es": "Fecha de incorporación",
+        "en": "Start date"
+      },
+      "description": "Earliest date the candidate could start on site.",
+      "max_days_ahead": 90,
+      "prompts": {
+        "es": [
+          "Última: ¿desde qué día podrías empezar?",
+          "Para terminar: ¿cuándo podrías incorporarte a la obra?"
+        ],
+        "en": [
+          "Last one: from which day could you start?",
+          "Finally: when could you start on site?"
+        ]
+      },
+      "reask": {
+        "too_far": {
+          "es": "Buscamos gente para obras de los próximos 3 meses. ¿Cuándo podrías empezar como máximo?",
+          "en": "We're hiring for sites in the next 3 months. What's the latest you could start?"
+        }
+      }
+    }
+  ],
+  "rules": [
+    {
+      "id": "underage",
+      "action": "disqualify",
+      "label": {
+        "es": "Menor de 18 años",
+        "en": "Under 18"
+      },
+      "field": "is_adult",
+      "op": "eq",
+      "value": false,
+      "message": {
+        "es": "Gracias por tu interés. Por ley, para trabajar en obra hay que ser mayor de edad, así que ahora no puedo seguir con tu candidatura. ¡Te esperamos cuando cumplas 18!",
+        "en": "Thanks for your interest. By law, site work requires being 18 or over, so I can't take your application forward now. We'd love to hear from you when you turn 18!"
+      }
+    },
+    {
+      "id": "no_work_permit",
+      "action": "disqualify",
+      "label": {
+        "es": "Sin permiso de trabajo",
+        "en": "No right to work"
+      },
+      "field": "work_permit",
+      "op": "eq",
+      "value": false,
+      "message": {
+        "es": "Gracias por contármelo. Para contratarte necesitamos permiso de trabajo en España, así que ahora no puedo seguir. Si lo consigues, escríbenos de nuevo.",
+        "en": "Thanks for telling me. To hire you we need the right to work in Spain, so I can't continue now. If you get it, message us again."
+      }
+    },
+    {
+      "id": "out_of_area",
+      "action": "disqualify",
+      "label": {
+        "es": "Sin obras en su zona",
+        "en": "No sites in their area"
+      },
+      "on_error": "out_of_area",
+      "question": "location",
+      "after_attempts": 1,
+      "flags": [
+        "waitlist_out_of_area"
+      ],
+      "message": {
+        "es": "Gracias por tu tiempo. Ahora no tenemos obras en tu zona. Te apunto en la lista de espera y te avisamos cuando abramos una cerca.",
+        "en": "Thanks for your time. We have no sites in your area right now. I'm adding you to the waitlist and we'll let you know when one opens nearby."
+      }
+    },
+    {
+      "id": "id_not_verified",
+      "action": "disqualify",
+      "label": {
+        "es": "Documento no verificado",
+        "en": "ID not verified"
+      },
+      "field": "id_check",
+      "op": "eq",
+      "value": "invalid",
+      "message": {
+        "es": "No hemos podido verificar tu documento de identidad, así que no puedo seguir con la candidatura por aquí. Si crees que es un error, escríbenos a empleo@horizonte.example y lo revisa una persona.",
+        "en": "We couldn't verify your ID document, so I can't continue with your application here. If you think this is a mistake, email empleo@horizonte.example and a person will review it."
+      }
+    },
+    {
+      "id": "physical_review",
+      "action": "flag",
+      "label": {
+        "es": "Revisar capacidad física",
+        "en": "Review physical requirements"
+      },
+      "field": "physical_ok",
+      "op": "eq",
+      "value": false,
+      "flags": [
+        "physical_review"
+      ],
+      "note": "El candidato indica que el trabajo físico pesado puede ser un problema: hablar con él sobre tareas adecuadas (no es un descarte automático).",
+      "review": true
+    },
+    {
+      "id": "needs_prl_training",
+      "action": "flag",
+      "label": {
+        "es": "Necesita curso PRL",
+        "en": "Needs safety course"
+      },
+      "field": "has_prl_course",
+      "op": "eq",
+      "value": false,
+      "flags": [
+        "needs_prl_training"
+      ],
+      "note": "Sin curso PRL de 20h: reservar el curso de la empresa antes del primer día en obra."
+    },
+    {
+      "id": "transport_review",
+      "action": "flag",
+      "label": {
+        "es": "Revisar transporte",
+        "en": "Review transport"
+      },
+      "field": "transport",
+      "op": "eq",
+      "value": "none",
+      "flags": [
+        "transport_review"
+      ],
+      "note": "Sin transporte propio: asignar una obra accesible a pie o con coche compartido."
+    }
+  ],
+  "scoring": [
+    {
+      "field": "has_prl_course",
+      "label": {
+        "es": "Curso PRL",
+        "en": "PRL course"
+      },
+      "op": "eq",
+      "value": true,
+      "points": 20
+    },
+    {
+      "field": "construction_experience_years",
+      "label": {
+        "es": "Años en obra (5/año)",
+        "en": "Years on site (5/yr)"
+      },
+      "per_unit": 5,
+      "max_points": 20
+    },
+    {
+      "field": "construction_trades",
+      "label": {
+        "es": "Oficios (5 c/u)",
+        "en": "Trades (5 each)"
+      },
+      "per_unit": 5,
+      "max_points": 10
+    },
+    {
+      "field": "transport",
+      "label": {
+        "es": "Vehículo propio",
+        "en": "Own vehicle"
+      },
+      "op": "eq",
+      "value": "own_vehicle",
+      "points": 20
+    },
+    {
+      "field": "transport",
+      "label": {
+        "es": "Transporte público",
+        "en": "Public transport"
+      },
+      "op": "eq",
+      "value": "public_transport",
+      "points": 10
+    },
+    {
+      "field": "physical_ok",
+      "label": {
+        "es": "Apto para trabajo físico",
+        "en": "Fit for physical work"
+      },
+      "op": "eq",
+      "value": true,
+      "points": 15
+    },
+    {
+      "field": "start_date",
+      "label": {
+        "es": "Incorporación en 7 días",
+        "en": "Can start within 7 days"
+      },
+      "op": "within_days",
+      "value": 7,
+      "points": 15
+    }
+  ],
+  "faq_file": "faq.json",
+  "service_areas_file": "service_areas.json",
+  "checks": [
+    {
+      "id": "id_check",
+      "label": {
+        "es": "Verificación de identidad",
+        "en": "Identity verification"
+      },
+      "provider": "mock_id_registry",
+      "trigger": "id_document",
+      "inputs": [
+        "id_document",
+        "full_name"
+      ],
+      "blocking": true,
+      "timeout_seconds": 300
+    }
+  ]
+}

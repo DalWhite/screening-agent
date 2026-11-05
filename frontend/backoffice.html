@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RecruitDesk · Backoffice</title>
+  <link rel="stylesheet" href="/static/bo/backoffice.css">
+</head>
+<body class="bo">
+  <a class="skip" href="#view">Saltar al contenido</a>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">R</span>RecruitDesk</div>
+    <nav id="nav" aria-label="Secciones"></nav>
+    <div class="sidebar-foot"><div id="recruiter" class="recruiter-box"></div></div>
+  </aside>
+  <div class="shell">
+    <header class="topbar">
+      <div class="global-search" id="global-search"></div>
+      <label class="process-picker">
+        <select id="profile-filter" aria-label="Proceso de selección"></select>
+      </label>
+      <div class="topbar-actions" id="topbar-actions"></div>
+    </header>
+    <main id="view" tabindex="-1"></main>
+  </div>
+  <div id="toasts" role="status" aria-live="polite"></div>
+  <script type="module" src="/static/bo/app.js"></script>
+</body>
+</html>

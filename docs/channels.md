@@ -27,6 +27,22 @@ flowchart LR
 | `channels/voice.py` | The call is a TwiML loop: `<Say>` the agent's reply, `<Gather input="speech">` the answer, POST the transcript back. Twilio does STT/TTS; the agent only ever sees text. |
 | `session_store.py` | In-memory registry backed by SQLite, now also addressable by channel identity (`source` + `contact` phone number). Survives restarts. |
 
+### Which recruiting process?
+
+A phone number can't show a job picker, so each channel runs one screening profile: `WHATSAPP_PROFILE` and `VOICE_PROFILE` (empty = `DEFAULT_PROFILE`). To run two processes over WhatsApp, use two Twilio senders and two deployments (or extend `WhatsAppChannel` to map sender → profile).
+
+### Human takeover
+
+When a recruiter takes over a conversation from the backoffice (`docs/backoffice.md`), the agent stays silent for that candidate:
+
+- **WhatsApp**: recruiter messages are pushed through the Twilio REST API (same 24h-window/template rules as nudges). The candidate's replies are stored and answered by nobody but the recruiter (empty TwiML). Hand-back and reopen questions are pushed too.
+- **Voice**: the caller hears "Un reclutador está revisando tu conversación…". Recruiter messages stay in the transcript for the follow-up call.
+- Re-engagement nudges and silence timeouts are suspended while a recruiter owns the conversation.
+
+### External checks on channels
+
+When a candidate's final decision waits for an external check (`verifying`), a new WhatsApp message continues the same session: the agent answers "still verifying". The decision is **pushed** as soon as the check answers, and so is a knockout that arrives mid-conversation. Voice callers hear the holding message; the decision is kept in the transcript for the follow-up.
+
 ### Session identity
 
 Web sessions are addressed by session id; channel sessions by phone number

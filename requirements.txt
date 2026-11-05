@@ -5,4 +5,5 @@ openai==3.28.0
 httpx==0.28.1
 pytest==9.1.1
 python-dateutil==2.9.0
+python-dotenv>=1.0
 twilio==9.12.0

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import threading
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
 from .screening.agent import SessionState
-from .screening.schema import Lang, ScreeningData, Stage
+from .screening.schema import CandidateData, Lang
 from .storage import db
 
 log = logging.getLogger("sazon.sessions")
@@ -18,14 +20,15 @@ def parse_ts(value: str) -> datetime:
 
 def state_from_row(row: dict) -> Optional[SessionState]:
     """Rehydrate an in-memory SessionState from a stored session row."""
-    try:
-        data = ScreeningData(**(row.get("data") or {}))
-    except Exception:
+    raw = row.get("data")
+    if not isinstance(raw, dict):
         return None
     state = SessionState(
         id=row["id"],
-        stage=Stage(row["stage"]),
-        data=data,
+        profile_id=row.get("profile_id") or "",
+        profile_revision=row.get("profile_revision"),
+        stage=str(row["stage"]),
+        data=CandidateData(raw),
         language=Lang(row["language"]),
         status=row["status"],
         source=row["source"],
@@ -39,9 +42,19 @@ def state_from_row(row: dict) -> Optional[SessionState]:
         rag_hits=list(row.get("rag_hits") or []),
         summary=row.get("summary"),
         dropped_at=row.get("dropped_at_stage") or (row.get("summary") or {}).get("dropped_at_stage"),
+        disqualify_reason=row.get("disqualify_reason"),
+        close_reason=(row.get("summary") or {}).get("close_reason"),
+        bot_paused=bool(row.get("bot_paused")),
+        completed_stages=list(row.get("completed_stages") or (row.get("summary") or {}).get("completed_stages") or []),
+        attempts=dict(row.get("attempts") or {}),
+        abuse_count=int(row.get("abuse_count") or 0),
     )
     full = db.get_session(row["id"]) or {}
-    state.history = [{"role": m["role"], "content": m["content"]} for m in full.get("messages", [])]
+    # recruiter messages are part of the conversation the model must see (as the assistant side)
+    state.history = [
+        {"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]}
+        for m in full.get("messages", [])
+    ]
     try:
         state.last_candidate_ts = parse_ts(row["last_ts"])
     except ValueError:
@@ -56,6 +69,12 @@ class SessionStore:
 
     def __init__(self) -> None:
         self.registry: dict[str, SessionState] = {}
+        self._locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
+
+    def lock(self, session_id: str) -> threading.RLock:
+        """Serialises mutations of one session across request threads, the
+        re-engagement monitor and the verification worker."""
+        return self._locks[session_id]
 
     def get(self, session_id: str) -> Optional[SessionState]:
         state = self.registry.get(session_id)

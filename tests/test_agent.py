@@ -4,7 +4,7 @@ import pytest
 
 from backend.llm.client import MockLLM
 from backend.screening.agent import ScreeningAgent
-from backend.screening.schema import ExtractionResult, Intent, Schedule, Stage, TurnDecision
+from backend.screening.schema import ExtractionResult, Intent, Stage, TurnDecision
 
 TODAY = date(2026, 10, 11)
 
@@ -13,20 +13,20 @@ class NullAt(MockLLM):
     """MockLLM that returns an empty ANSWER extraction for the given stages,
     forcing the agent to fall back to deterministic raw-text mapping."""
 
-    def __init__(self, stages: set[Stage]):
+    def __init__(self, stages: set[str]):
         self.null_stages = stages
 
-    def extract(self, history: list[dict], stage: Stage, today: date) -> ExtractionResult:
+    def extract(self, history: list[dict], stage: str, today: date, profile=None) -> ExtractionResult:
         if stage in self.null_stages:
             return ExtractionResult(intent=Intent.ANSWER)
-        return super().extract(history, stage, today)
+        return super().extract(history, stage, today, profile=profile)
 
 
 class LeakLLM(MockLLM):
     """MockLLM that echoes the phrasing plan verbatim, like the live model
     sometimes does. The agent's leak guard must catch it."""
 
-    def generate(self, stage, language, sentiment, plan, faq_block, candidate_message, state) -> str:
+    def generate(self, stage, language, sentiment, plan, faq_block, candidate_message, state, profile=None) -> str:
         return plan
 
 
@@ -54,9 +54,9 @@ def test_qualified_es_with_faq_and_redaction():
         "Puedo empezar el 2026-11-02. Mi teléfono es 600112233",
     ])
     faq_turn = next(t for t in turns if "pagan por hora" in t[0])
-    assert state.stage is Stage.QUALIFIED
+    assert state.stage == Stage.QUALIFIED
     assert bool(faq_turn[2].rag_used)
-    assert state.data.start_date == date(2026, 11, 2)
+    assert state.data.start_date == "2026-11-02"
     assert state.data.city == "Madrid" and state.data.country == "ES"
     assert state.summary is not None and state.summary["qualified"] is True
     assert all(t[1].strip() for t in turns)
@@ -68,14 +68,14 @@ def test_qualified_es_with_faq_and_redaction():
 
 def test_no_license_disqualified():
     _, state, _ = run(["hola", "Pedro Sánchez", "no tengo carnet"])
-    assert state.stage is Stage.DISQUALIFIED
+    assert state.stage == Stage.DISQUALIFIED
     assert state.summary["disqualify_reason"] == "no_license"
     assert state.summary["dropped_at_stage"] is None
 
 
 def test_out_of_area_retry_then_waitlist():
     _, state, _ = run(["hola", "Ana Ruiz", "sí", "Ourense", "Vigo"])
-    assert state.stage is Stage.DISQUALIFIED
+    assert state.stage == Stage.DISQUALIFIED
     assert state.summary["disqualify_reason"] == "out_of_area"
     assert "waitlist_out_of_area" in state.flags
 
@@ -86,7 +86,7 @@ def test_three_strike_giveup_needs_review():
         "depende", "quizá", "no sé",
         "flexible", "no tengo experiencia", "la próxima semana",
     ])
-    assert state.stage is Stage.ABANDONED
+    assert state.stage == Stage.ABANDONED
     assert "needs_review" in state.flags
     assert "unresolved:availability" in state.flags
     assert state.summary["dropped_at_stage"] is None
@@ -104,11 +104,11 @@ def test_english_with_codeswitch():
         "1 year in Uber Eats",
         "in 2 weeks",
     ], language="en")
-    assert state.stage is Stage.QUALIFIED
+    assert state.stage == Stage.QUALIFIED
     assert "en" in state.languages_seen
-    assert state.data.start_date == date(2026, 10, 25)
+    assert state.data.start_date == "2026-10-25"
     assert state.data.preferred_schedule is not None
-    assert state.data.preferred_schedule.value == "morning"
+    assert state.data.preferred_schedule == "morning"
 
 
 def test_injection_and_abuse_abandons():
@@ -118,7 +118,7 @@ def test_injection_and_abuse_abandons():
     ])
     injection_turn = next(t for t in turns if "ignore all" in t[0])
     assert injection_turn[2].guardrail == "prompt_injection"
-    assert state.stage is Stage.ABANDONED
+    assert state.stage == Stage.ABANDONED
     assert "abusive_language" in state.flags
 
 
@@ -133,7 +133,7 @@ def test_messages_after_close_ignored():
 
 
 def test_license_raw_text_fallback():
-    agent = ScreeningAgent(NullAt({Stage.LICENSE}))
+    agent = ScreeningAgent(NullAt({"license"}))
     state = agent.new_session()
     agent.opening(state)
     agent.process(state, "hola", today=TODAY)
@@ -141,23 +141,23 @@ def test_license_raw_text_fallback():
     _, decision = agent.process(state, "sí tengo licencia de coche de moto pues", today=TODAY)
     assert state.data.has_license is True
     assert any(e["type"] == "field_fallback" for e in decision.events)
-    assert state.stage is Stage.LOCATION
+    assert state.stage == "location"
 
 
 def test_schedule_raw_text_fallback():
-    agent = ScreeningAgent(NullAt({Stage.SCHEDULE}))
+    agent = ScreeningAgent(NullAt({"schedule"}))
     state = agent.new_session()
     agent.opening(state)
     for msg in ["hola", "Pedro Sánchez", "sí", "Madrid, Centro", "jornada completa"]:
         agent.process(state, msg, today=TODAY)
     _, decision = agent.process(state, "flexible", today=TODAY)
-    assert state.data.preferred_schedule is Schedule.FLEXIBLE
+    assert state.data.preferred_schedule == "flexible"
     assert decision.validation_error is None
     assert any(e["type"] == "field_fallback" for e in decision.events)
 
 
 def test_experience_raw_text_fallback():
-    agent = ScreeningAgent(NullAt({Stage.EXPERIENCE}))
+    agent = ScreeningAgent(NullAt({"experience"}))
     state = agent.new_session()
     agent.opening(state)
     for msg in ["hola", "Pedro Sánchez", "sí", "Madrid, Centro", "jornada completa", "flexible"]:
@@ -168,11 +168,11 @@ def test_experience_raw_text_fallback():
     assert "uber eats" in state.data.experience_platforms
     assert decision.validation_error is None
     assert any(e["type"] == "field_fallback" for e in decision.events)
-    assert state.stage is Stage.START_DATE
+    assert state.stage == "start_date"
 
 
 def test_experience_garbage_gives_up_and_moves_on():
-    agent = ScreeningAgent(NullAt({Stage.EXPERIENCE}))
+    agent = ScreeningAgent(NullAt({"experience"}))
     state = agent.new_session()
     agent.opening(state)
     for msg in ["hola", "Pedro Sánchez", "sí", "Madrid, Centro", "jornada completa", "flexible"]:
@@ -180,9 +180,9 @@ def test_experience_garbage_gives_up_and_moves_on():
     agent.process(state, "quizás tal vez", today=TODAY)
     assert "experience" in state.given_up
     assert "unresolved:experience" in state.flags
-    assert state.stage is Stage.START_DATE
+    assert state.stage == "start_date"
     agent.process(state, "la próxima semana", today=TODAY)
-    assert state.stage is Stage.QUALIFIED
+    assert state.stage == Stage.QUALIFIED
     assert state.summary["qualified"] is True
 
 
@@ -208,17 +208,17 @@ def test_resume_returns_to_dropped_stage():
     agent.opening(state)
     for msg in ["hola", "Pedro Sánchez", "sí"]:
         agent.process(state, msg, today=TODAY)
-    assert state.stage is Stage.LOCATION
+    assert state.stage == "location"
     _abandon(agent, state)
     assert state.status == "abandoned"
     assert state.summary["dropped_at_stage"] == "location"
     reply = agent.resume(state)
-    assert state.stage is Stage.LOCATION
+    assert state.stage == "location"
     assert state.status == "active"
     assert state.summary is None
     assert "retomamos" in reply.lower()
     agent.process(state, "Madrid, Centro", today=TODAY)
-    assert state.stage is Stage.AVAILABILITY
+    assert state.stage == "availability"
 
 
 def test_resume_english_session():
@@ -230,11 +230,11 @@ def test_resume_english_session():
     _abandon(agent, state)
     reply = agent.resume(state)
     assert "welcome back" in reply.lower()
-    assert state.stage is Stage.LOCATION
+    assert state.stage == "location"
 
 
 def test_final_decisions_cannot_be_resumed():
     agent, state, _ = run(["hola", "Pedro Sánchez", "no tengo carnet"])
-    assert state.stage is Stage.DISQUALIFIED
+    assert state.stage == Stage.DISQUALIFIED
     with pytest.raises(ValueError):
         agent.resume(state)

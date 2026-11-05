@@ -7,3 +7,6 @@ data/*.db-*
 .venv/
 _probe.py
 *.log
+# Playwright artifacts
+test-results/
+e2e/.auth/

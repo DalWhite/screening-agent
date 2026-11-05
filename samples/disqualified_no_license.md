@@ -1,6 +1,6 @@
 # Disqualified — no driver's license (soft landing with bike-courier waitlist)
 
-_Session 5de56462-e2a6-4a08-86d9-a86c4a2d60d7 · language es · today 2026-10-11_
+_Profile delivery_courier (Grupo Sazón) · session d3458cf2-4212-443d-9009-b7cf56aa94a7 · language es · today 2026-10-11_
 
 **Marisol:** ¡Hola! Soy Marisol, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?
 
@@ -28,9 +28,11 @@ _Stage: license → disqualified_
 
 ```json
 {
+  "profile_id": "delivery_courier",
   "qualified": false,
   "outcome": "disqualified",
   "disqualify_reason": "no_license",
+  "close_reason": "no_license",
   "completed_stages": [
     "intro",
     "name"
@@ -52,12 +54,14 @@ _Stage: license → disqualified_
     "preferred_schedule": null,
     "experience_years": null,
     "experience_platforms": [],
-    "start_date": null
+    "start_date": null,
+    "license_check": null
   },
+  "score": 0.0,
   "recruiter_notes": [],
   "flags": [
     "no_license"
   ],
-  "generated_at": "2026-10-12T18:55:09.282810Z"
+  "generated_at": "2026-11-04T14:18:53.480539Z"
 }
 ```

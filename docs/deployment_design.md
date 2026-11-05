@@ -61,4 +61,5 @@ Health endpoint reports model availability; an external uptime probe polls it an
 
 - No secrets in code; `.env` per environment; API keys rotated.
 - Guardrails run before the LLM (injection/abuse screening) and after (PII redaction before storage).
-- Rate-limit chat endpoints per IP/session; recruiter dashboard behind SSO + role-based access.
+- Rate-limit chat endpoints per IP/session; recruiter backoffice behind SSO + role-based access (the pilot ships optional HTTP Basic auth via `BACKOFFICE_PASSWORD`; the recruiter identity for audit comes from the `X-Recruiter` header, to be replaced by the SSO identity).
+- Screening profiles are code-reviewed data: changes to knockout rules go through the same review and CI (`scripts/validate_profiles.py`, evals, e2e) as code.

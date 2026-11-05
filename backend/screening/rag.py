@@ -4,8 +4,8 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
-from ..config import settings
 from .language import normalize
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -34,19 +34,22 @@ class FaqDoc:
 
 
 class FaqIndex:
-    """Small lexical BM25 retriever over the client FAQ.
+    """Small lexical BM25 retriever over a profile's FAQ file.
 
-    No embeddings dependency: the corpus is ~26 documents, so BM25 is faster,
+    No embeddings dependency: each corpus is a few dozen documents, so BM25 is faster,
     deterministic, inspectable and works offline. Swapping in embeddings later
     only changes `_score` (documented in docs/architecture.md).
     """
 
-    def __init__(self, path=None):
-        path = path or settings.data_dir / "faq.json"
-        raw = json.loads(path.read_text(encoding="utf-8"))
+    def __init__(self, source):
+        """``source``: path to a FAQ json file ({"items": [...]}) or the list of items itself."""
+        if isinstance(source, (str, Path)):
+            items = json.loads(Path(source).read_text(encoding="utf-8"))["items"]
+        else:
+            items = list(source)
         self.docs = [
-            FaqDoc(i["id"], i["lang"], i["topic"], i["q"], i["a"], tokenize(f"{i['q']} {i['a']}"))
-            for i in raw["items"]
+            FaqDoc(i["id"], i.get("lang", "es"), i.get("topic", ""), i["q"], i["a"], tokenize(f"{i['q']} {i['a']}"))
+            for i in items
         ]
         self.avg_len = sum(len(d.tokens) for d in self.docs) / max(1, len(self.docs))
         df: dict[str, int] = {}
@@ -92,5 +95,3 @@ class FaqIndex:
         block = "\n".join(f"- [{d.id}] {d.answer}" for d in docs)
         return block, [d.id for d in docs]
 
-
-FAQ = FaqIndex()

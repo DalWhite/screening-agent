@@ -6,10 +6,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.llm.client import MockLLM
 from backend.screening.agent import ScreeningAgent
-from backend.screening.schema import Stage
 
 TODAY = date(2026, 10, 11)
 
+# (file, title, messages[, profile_id])
 SCENARIOS = [
     (
         "qualified_spanish_faq.md",
@@ -52,31 +52,70 @@ SCENARIOS = [
         ["hola", "Marc Puig", "sí", "Barcelona, Gràcia",
          "no sé", "depende", "creo que a veces"],
     ),
+    (
+        "construction_qualified_prl_flag.md",
+        "Construction labourer — qualified, no PRL course (flag for the recruiter, not a rejection)",
+        ["Hola, busco trabajo en obra", "Carlos Martín Ruiz", "sí, tengo 34 años", "sí, tengo NIE con permiso",
+         "mi DNI es 12345678Z", "Getafe", "¿Dais vosotros las botas y el casco?", "sí, sin problema", "no, no lo tengo",
+         "3 años de peón y algo de albañilería", "tengo coche", "el lunes"],
+        "construction_laborer",
+    ),
+    (
+        "construction_underage.md",
+        "Construction labourer — knocked out: under 18 (legal requirement)",
+        ["hola", "Lucía Pérez", "tengo 17 años"],
+        "construction_laborer",
+    ),
+    (
+        "construction_physical_review_en.md",
+        "Construction labourer (EN) — reports physical limits: qualified but routed to recruiter review",
+        ["Hi, I want to apply", "John Smith", "yes", "yes", "X1234567L", "Malaga", "no, I can't lift heavy loads",
+         "yes I have it", "5 years as a bricklayer", "I drive my own car", "next week"],
+        "construction_laborer",
+    ),
 ]
 
 
-def render(name: str, title: str, messages: list[str]) -> str:
+def render(name: str, title: str, messages: list[str], profile_id: str | None = None) -> str:
     agent = ScreeningAgent(MockLLM())
-    state = agent.new_session(source="chat")
-    lines = [f"# {title}", "", f"_Session {state.id} · language {state.language.value} · today {TODAY.isoformat()}_", ""]
+    language = "en" if messages and messages[0].lower().startswith("hi") else None
+    state = agent.new_session(source="web", profile_id=profile_id, language=language)
+    profile = agent.profile(state)
+    bot = profile.persona.agent_name
+    lines = [f"# {title}", "",
+             f"_Profile {profile.id} ({profile.company}) · session {state.id} · language {state.language.value} · "
+             f"today {TODAY.isoformat()}_", ""]
     opening = agent.opening(state)
-    lines.append(f"**Marisol:** {opening}")
+    lines.append(f"**{bot}:** {opening}")
+    requested = []
     for msg in messages:
         reply, decision = agent.process(state, msg, today=TODAY)
+        requested.extend(decision.check_requests)
         lines.append("")
         lines.append(f"**Candidate:** {msg}")
         lines.append("")
-        lines.append(f"**Marisol:** {reply}")
+        lines.append(f"**{bot}:** {reply}")
         if decision.rag_used:
             lines.append("")
             lines.append(f"_RAG: answered from FAQ {', '.join(decision.rag_used)}_")
-        if decision.stage_before is not decision.stage_after:
+        if decision.stage_before != decision.stage_after:
             lines.append("")
-            lines.append(f"_Stage: {decision.stage_before.value} → {decision.stage_after.value}_")
+            lines.append(f"_Stage: {decision.stage_before} → {decision.stage_after}_")
+    # external checks answer asynchronously (the worker, here the mock registry at once)
+    from backend.verifications.providers import MockIdRegistry
+
+    for req in requested:
+        status, detail = MockIdRegistry(delay_seconds=0).poll({"due_at": None}, req["payload"], None)
+        late, _ = agent.apply_check_result(state, req["check"], status, detail, today=TODAY)
+        lines.append("")
+        lines.append(f"_Async check {req['check']}: {status} ({detail})_")
+        if late:
+            lines.append("")
+            lines.append(f"**{bot}:** {late}")
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append(f"**Final stage:** {state.stage.value} · **flags:** {state.flags or '—'}")
+    lines.append(f"**Final stage:** {state.stage} · **flags:** {state.flags or '—'}")
     if state.summary:
         lines.append("")
         lines.append("```json")
@@ -87,8 +126,8 @@ def render(name: str, title: str, messages: list[str]) -> str:
 
 
 def main() -> None:
-    for fname, title, messages in SCENARIOS:
-        text = render(fname, title, messages)
+    for fname, title, messages, *profile in SCENARIOS:
+        text = render(fname, title, messages, profile[0] if profile else None)
         with open(f"samples/{fname}", "w", encoding="utf-8") as f:
             f.write(text)
         print(f"wrote samples/{fname}")

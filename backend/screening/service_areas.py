@@ -4,8 +4,8 @@ import json
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from pathlib import Path
 
-from ..config import settings
 from .language import normalize
 
 
@@ -21,16 +21,18 @@ class LocationMatch:
 
 
 class ServiceAreas:
-    """Normalised + fuzzy matcher over the client's 45 service areas.
+    """Normalised + fuzzy matcher over a profile's service areas (cities, aliases, zones).
 
     Matching is deliberately conservative: an ambiguous answer produces a
     clarification question rather than a wrong disqualification.
     """
 
-    def __init__(self, path=None):
-        path = path or settings.data_dir / "service_areas.json"
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        self.locations = raw["locations"]
+    def __init__(self, source):
+        """``source``: path to a coverage json file ({"locations": [...]}) or the list of locations."""
+        if isinstance(source, (str, Path)):
+            self.locations = json.loads(Path(source).read_text(encoding="utf-8"))["locations"]
+        else:
+            self.locations = [dict(loc) for loc in source]
         self._index: dict[str, dict] = {}
         for loc in self.locations:
             names = [loc["city"], *loc.get("aliases", [])]
@@ -38,10 +40,15 @@ class ServiceAreas:
                 self._index[normalize(name)] = loc
         self._keys = list(self._index.keys())
 
+    @staticmethod
+    def _contains_words(haystack: str, needle: str) -> bool:
+        return re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", haystack) is not None
+
     def _score(self, query: str, key: str) -> float:
         if query == key:
             return 1.0
-        if query in key or key in query:
+        # containment only on word boundaries: "sevilla ciudad" ~ "sevilla", but "vale" !~ "valencia"
+        if self._contains_words(key, query) or self._contains_words(query, key):
             return 0.92 - 0.01 * abs(len(key) - len(query))
         return SequenceMatcher(None, query, key).ratio()
 
@@ -74,7 +81,9 @@ class ServiceAreas:
                     zone_hits.append((1.0, loc, zone))
                 elif q in zk or zk in q:
                     zone_hits.append((0.85, loc, zone))
-        if zone_hits:
+        exact_city = best_score >= 1.0
+        # A partial zone hit ("Malaga" inside "Velez-Malaga") must not shadow an exact city/alias match.
+        if zone_hits and (not exact_city or max(z[0] for z in zone_hits) >= 1.0):
             zone_hits.sort(key=lambda x: x[0], reverse=True)
             score, loc, zone = zone_hits[0]
             return LocationMatch(True, loc["city"], loc["country"], zone, score, reason="zone_match")
@@ -115,5 +124,3 @@ class ServiceAreas:
     def is_service_area(self, text: str) -> bool:
         return self.match_city(text).matched
 
-
-AREAS = ServiceAreas()

@@ -3,36 +3,47 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Grupo Sazón — Screening</title>
+  <title>Screening — Chat</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Grupo <span>Sazón</span> · Screening</div>
+    <div class="brand" id="brand">Screening</div>
     <nav>
-      <a href="/dashboard">Dashboard</a>
+      <a id="change-job" href="/" hidden>Otras ofertas</a>
     </nav>
   </header>
 
   <main class="chat-wrap">
-    <div class="stage-chip" id="stage-chip">conectando…</div>
-    <div class="messages" id="messages"></div>
-    <div id="outcome"></div>
-    <div id="resume-banner" class="resume-banner" hidden>
-      <span>Dejaste la conversación abierta. Puedes retomarla justo donde la dejaste.</span>
-      <button id="resume" type="button">Retomar conversación</button>
+    <section id="job-picker" class="job-picker" hidden aria-labelledby="picker-title">
+      <h1 id="picker-title">¿A qué oferta quieres aplicar?</h1>
+      <p class="muted">Elige un puesto y nuestro asistente te hará unas preguntas rápidas.</p>
+      <div id="jobs" class="jobs"></div>
+    </section>
+
+    <div id="chat" class="chat" hidden>
+      <div class="chat-head">
+        <div id="role" class="role"></div>
+        <div class="stage-chip" id="stage-chip">conectando…</div>
+      </div>
+      <div class="messages" id="messages" aria-live="polite"></div>
+      <div id="outcome"></div>
+      <div id="resume-banner" class="resume-banner" hidden>
+        <span>Dejaste la conversación abierta. Puedes retomarla justo donde la dejaste.</span>
+        <button id="resume" type="button">Retomar conversación</button>
+      </div>
+      <form class="composer" id="composer">
+        <input id="text" type="text" autocomplete="off" placeholder="Escribe tu respuesta…" aria-label="Tu respuesta" disabled>
+        <button id="mic" type="button" class="mic" title="Responder por voz" aria-label="Responder por voz" disabled>🎙</button>
+        <select id="mic-lang" title="Idioma del micrófono" aria-label="Idioma del micrófono">
+          <option value="es-ES">ES</option>
+          <option value="en-US">EN</option>
+        </select>
+        <label class="tts-toggle" title="Voz del agente"><input id="tts" type="checkbox"> 🔊</label>
+        <button id="send" type="submit" disabled>Enviar</button>
+        <button id="end" type="button" class="ghost" disabled>Finalizar</button>
+      </form>
     </div>
-    <form class="composer" id="composer">
-      <input id="text" type="text" autocomplete="off" placeholder="Escribe tu respuesta…" disabled>
-      <button id="mic" type="button" class="mic" title="Responder por voz" disabled>🎙</button>
-      <select id="mic-lang" title="Idioma del micrófono">
-        <option value="es-ES">ES</option>
-        <option value="en-US">EN</option>
-      </select>
-      <label class="tts-toggle" title="Voz del agente"><input id="tts" type="checkbox"> 🔊</label>
-      <button id="send" type="submit" disabled>Enviar</button>
-      <button id="end" type="button" class="ghost" disabled>Finalizar</button>
-    </form>
   </main>
 
   <script src="/static/chat.js"></script>

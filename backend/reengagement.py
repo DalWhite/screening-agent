@@ -7,8 +7,7 @@ from typing import Any, Callable, Optional
 
 from .config import settings
 from .screening.agent import SessionState
-from .screening.prompts import REENGAGE_MESSAGES
-from .screening.schema import Stage, TurnDecision
+from .screening.schema import TERMINAL_STAGES
 from .storage import db
 
 log = logging.getLogger("sazon.reengage")
@@ -55,7 +54,9 @@ class ReengagementMonitor:
     def tick(self) -> None:
         now = datetime.now(timezone.utc)
         for state in list(self.registry.values()):
-            if state.status != "active" or state.stage in (Stage.QUALIFIED, Stage.DISQUALIFIED, Stage.ABANDONED):
+            if state.status != "active" or state.stage in TERMINAL_STAGES:
+                continue
+            if state.bot_paused:  # a recruiter owns the conversation: no automatic nudges or closing
                 continue
             if not any(m.get("role") == "user" for m in state.history):
                 continue
@@ -69,8 +70,7 @@ class ReengagementMonitor:
                 self._close_abandoned(state)
 
     def _nudge(self, state: SessionState, attempt: int) -> None:
-        messages = REENGAGE_MESSAGES.get(attempt) or REENGAGE_MESSAGES[1]
-        text = messages.get(state.language.value) or messages["es"]
+        text = self.agent.reengage_text(state, attempt)
         state.reengage_attempts = attempt
         state.history.append({"role": "assistant", "content": text})
         pushed = False
@@ -79,14 +79,13 @@ class ReengagementMonitor:
                 pushed = bool(self.notifier(state, text))
             except Exception:
                 log.exception("nudge push failed for session %s", state.id)
-        db.append_message(state.id, "assistant", text, state.stage.value, delivered=pushed)
+        db.append_message(state.id, "assistant", text, state.stage, delivered=pushed)
         db.set_reengage_attempts(state.id, attempt)
-        db.append_events(state.id, [{"type": "reengage_nudge", "payload": {"attempt": attempt, "pushed": pushed, "idle_seconds": int((datetime.now(timezone.utc) - state.last_candidate_ts).total_seconds())}}], state.stage.value)
+        db.append_events(state.id, [{"type": "reengage_nudge", "payload": {"attempt": attempt, "pushed": pushed, "idle_seconds": int((datetime.now(timezone.utc) - state.last_candidate_ts).total_seconds())}}], state.stage)
         log.info("re-engagement nudge %d for session %s (pushed=%s)", attempt, state.id, pushed)
 
     def _close_abandoned(self, state: SessionState) -> None:
-        decision = TurnDecision(stage_before=state.stage, stage_after=state.stage)
-        self.agent._close(state, decision, Stage.ABANDONED, "silence", None)
+        _, decision = self.agent.end(state, reason="silence")
         db.save_session(state)
-        db.append_events(state.id, decision.events, state.stage.value)
+        db.append_events(state.id, decision.events, state.stage)
         log.info("session %s closed as abandoned after silence", state.id)

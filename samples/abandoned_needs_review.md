@@ -1,6 +1,6 @@
 # Needs review — candidate gives up on a field after 3 re-asks
 
-_Session 092d0606-9c9d-464b-a159-d67fc48d4d04 · language es · today 2026-10-11_
+_Profile delivery_courier (Grupo Sazón) · session 43cf3d63-faa3-4fec-88c7-4946151a7565 · language es · today 2026-10-11_
 
 **Marisol:** ¡Hola! Soy Marisol, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?
 
@@ -38,10 +38,12 @@ _Stage: location → availability_
 
 **Candidate:** creo que a veces
 
-**Marisol:** Dime una de las tres: jornada completa, medio tiempo o solo fines de semana.
+**Marisol:** Elige turno: mañana, tarde, noche o flexible.
 
 _Stage: availability → schedule_
 
+_Async check license_check: error (No se recibió ningún número de documento)_
+
 ---
 
-**Final stage:** schedule · **flags:** ['unresolved:availability']
+**Final stage:** schedule · **flags:** ['unresolved:availability', 'check_error:license_check']

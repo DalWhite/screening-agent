@@ -74,7 +74,7 @@ def test_full_qualified_screening_over_whatsapp(channel):
         replies.extend(msgs)
 
     row = db.find_session_by_contact("whatsapp", NUMBER)
-    assert row["stage"] == Stage.QUALIFIED.value
+    assert row["stage"] == Stage.QUALIFIED
     assert row["summary"]["qualified"] is True
     assert row["data"]["city"] == "Madrid"
     # full transcript persisted: trigger + 8 turns + assistant replies
@@ -147,7 +147,7 @@ def test_no_license_disqualified_over_whatsapp(channel):
     for text in ["hola", "quiero el trabajo", "Pedro Sánchez", "no tengo carnet"]:
         twiml = channel.handle_inbound(CONTACT, text)
     row = db.find_session_by_contact("whatsapp", NUMBER)
-    assert row["stage"] == Stage.DISQUALIFIED.value
+    assert row["stage"] == Stage.DISQUALIFIED
     assert row["summary"]["disqualify_reason"] == "no_license"
     assert messages_in(twiml)
 
@@ -268,7 +268,7 @@ def test_slow_turn_returns_empty_twiml_then_pushes_reply(channel, fake_twilio_cl
     assert channel.late_deliveries == set()
     # the turn itself was fully persisted despite the early webhook response
     row = db.find_session_by_contact("whatsapp", NUMBER)
-    assert row["stage"] == Stage.NAME.value
+    assert row["stage"] == "name"
 
 
 def test_slow_turn_without_twilio_config_logs_and_does_not_crash(agent, store, monkeypatch, caplog):

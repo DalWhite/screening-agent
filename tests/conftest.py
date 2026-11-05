@@ -43,6 +43,16 @@ class FakeTwilioClient:
         self.messages = FakeMessages()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_profile_registry():
+    """Profiles published by one test (through the app's profile store) never leak into the next."""
+    from backend.screening.profile import reset_registry
+
+    reset_registry()
+    yield
+    reset_registry()
+
+
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
     """Point the app at a throwaway SQLite file."""

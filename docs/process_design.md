@@ -1,5 +1,7 @@
 # Phase 1 — Screening Process Design
 
+> This document describes the first process the agent ran: delivery couriers for Grupo Sazón. Since v2 this process is one **screening profile** (`backend/data/profiles/delivery_courier/`) among others, such as the low-qualification construction labourer process (`construction_laborer`). The stages, validation and knockouts below are now declared in that profile rather than coded. See `docs/screening_profiles.md` for the format and for the construction process design rationale.
+
 **Client:** Grupo Sazón (45 restaurants, Spain & Mexico) · **Role:** last-mile delivery courier
 **Today:** 1,000 applications/week, 13 recruiters, 60% of candidates never answer the phone, 80% of recruiter time spent on unqualified candidates.
 **Proposal:** a WhatsApp-style conversational screening agent ("Marisol") that pre-qualifies every candidate 24/7 in Spanish or English, and hands recruiters a structured, ranked shortlist.

@@ -7,8 +7,7 @@ from twilio.twiml.voice_response import Gather, VoiceResponse
 
 from ..config import settings
 from ..screening.agent import ScreeningAgent, SessionState
-from ..screening.prompts import REENGAGE_MESSAGES, RESUME_MESSAGES
-from ..screening.schema import Stage, TERMINAL_STAGES, TurnDecision
+from ..screening.schema import TERMINAL_STAGES
 from ..session_store import SessionStore
 from ..storage import db
 from .base import VOICE_LOCALES, BaseChannel, strip_for_voice, voice_locale
@@ -40,8 +39,8 @@ class VoiceChannel(BaseChannel):
 
     source = "voice"
 
-    def __init__(self, agent: ScreeningAgent, store: SessionStore):
-        super().__init__(agent, store)
+    def __init__(self, agent: ScreeningAgent, store: SessionStore, profile_id: str | None = None):
+        super().__init__(agent, store, profile_id)
         self.calls: dict[str, str] = {}  # CallSid -> session_id
 
     # ---------- webhooks ----------
@@ -58,10 +57,10 @@ class VoiceChannel(BaseChannel):
         else:
             # Candidate called back into a still-active session (dropped call):
             # welcome them back and re-ask the current question.
-            text = f"{RESUME_MESSAGES[state.language.value]} {self.agent._question(state.stage, state)}".strip()
+            text = f"{self.agent.resume_text(state)} {self.agent.question_text(state)}".strip()
             state.history.append({"role": "assistant", "content": text})
             db.save_session(state)
-            db.append_message(state.id, "assistant", text, state.stage.value)
+            db.append_message(state.id, "assistant", text, state.stage)
 
         log.info(
             "voice call start call=%s session=%s created=%s resumed=%s",
@@ -80,6 +79,8 @@ class VoiceChannel(BaseChannel):
             return self._handle_silence(state, retries)
 
         reply, _ = self.run_turn(state, speech)
+        if not reply:  # human takeover: the recruiter answers in writing, tell the caller
+            reply = self.agent.paused_text(state)
         if state.stage in TERMINAL_STAGES:
             return self._goodbye(state, reply)
         return self._ask(state, reply, retries=0)
@@ -100,8 +101,8 @@ class VoiceChannel(BaseChannel):
         db.append_events(
             session_id,
             [{"type": "voice_call_ended", "payload": {"call_sid": call_sid, "status": call_status,
-                                                      "stage": state.stage.value}}],
-            state.stage.value,
+                                                      "stage": state.stage}}],
+            state.stage,
         )
         db.save_session(state)
         log.info("voice call ended call=%s session=%s status=%s", call_sid, session_id, call_status)
@@ -110,19 +111,18 @@ class VoiceChannel(BaseChannel):
 
     def _handle_silence(self, state: SessionState, retries: int) -> str:
         if retries < settings.voice_max_silence_retries:
-            nudge = REENGAGE_MESSAGES[1].get(state.language.value) or REENGAGE_MESSAGES[1]["es"]
-            question = self.agent._question(state.stage, state)
+            nudge = self.agent.reengage_text(state, 1)
+            question = self.agent.question_text(state)
             db.append_events(
                 state.id,
                 [{"type": "voice_silence_retry", "payload": {"attempt": retries + 1}}],
-                state.stage.value,
+                state.stage,
             )
             return self._ask(state, f"{nudge} {question}".strip(), retries=retries + 1)
-        decision = TurnDecision(stage_before=state.stage, stage_after=state.stage)
-        reply = self.agent._close(state, decision, Stage.ABANDONED, "silence", None)
+        reply, decision = self.agent.end(state, reason="silence")
         db.save_session(state)
-        db.append_message(state.id, "assistant", reply, state.stage.value)
-        db.append_events(state.id, decision.events, state.stage.value)
+        db.append_message(state.id, "assistant", reply, state.stage)
+        db.append_events(state.id, decision.events, state.stage)
         log.info("voice session %s closed as abandoned after in-call silence", state.id)
         return self._goodbye(state, reply)
 

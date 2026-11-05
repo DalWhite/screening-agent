@@ -1,6 +1,6 @@
 # Disqualified — city outside service areas after one retry (waitlist)
 
-_Session bc31df92-d8dd-45a2-b452-cee4a1bf7198 · language es · today 2026-10-11_
+_Profile delivery_courier (Grupo Sazón) · session b02a0365-97d6-4996-bb9a-c838f5ebe0f8 · language es · today 2026-10-11_
 
 **Marisol:** ¡Hola! Soy Marisol, del equipo de Grupo Sazón. Te hago 7 preguntas rápidas, unos 4 minutos. ¿Empezamos?
 
@@ -24,7 +24,7 @@ _Stage: license → location_
 
 **Candidate:** Ourense
 
-**Marisol:** Ahora mismo no operamos en esa ciudad. ¿Tienes otra ciudad cercana de nuestra lista o te apunto a lista de espera?
+**Marisol:** Ahora mismo no operamos en Ourense. ¿Tienes otra ciudad cercana de nuestra lista o te apunto a lista de espera?
 
 **Candidate:** Vigo
 
@@ -32,15 +32,19 @@ _Stage: license → location_
 
 _Stage: location → disqualified_
 
+_Async check license_check: error (No se recibió ningún número de documento)_
+
 ---
 
-**Final stage:** disqualified · **flags:** ['waitlist_out_of_area', 'out_of_area']
+**Final stage:** disqualified · **flags:** ['waitlist_out_of_area', 'out_of_area', 'check_error:license_check']
 
 ```json
 {
+  "profile_id": "delivery_courier",
   "qualified": false,
   "outcome": "disqualified",
   "disqualify_reason": "out_of_area",
+  "close_reason": "out_of_area",
   "completed_stages": [
     "intro",
     "name",
@@ -63,13 +67,15 @@ _Stage: location → disqualified_
     "preferred_schedule": null,
     "experience_years": null,
     "experience_platforms": [],
-    "start_date": null
+    "start_date": null,
+    "license_check": "pending"
   },
+  "score": 0.0,
   "recruiter_notes": [],
   "flags": [
     "waitlist_out_of_area",
     "out_of_area"
   ],
-  "generated_at": "2026-10-12T18:55:09.286734Z"
+  "generated_at": "2026-11-04T14:18:53.503601Z"
 }
 ```

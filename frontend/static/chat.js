@@ -2,28 +2,48 @@ const $ = (id) => document.getElementById(id);
 const messagesEl = $("messages");
 const chipEl = $("stage-chip");
 let sessionId = null;
+let profile = null;          // active job profile (id, company, role, agent_name, questions)
+let profiles = [];
 let polling = null;
 let listening = false;
 let recognition = null;
 let lastLang = "es";
-const SESSION_KEY = "sazon_session_id";
+let status = "active";
+let botPaused = false;
+let pausedNoticeShown = false;
+
+const LEGACY_SESSION_KEY = "sazon_session_id";
+const sessionKey = (profileId) => `screening_session:${profileId}`;
+const params = new URLSearchParams(location.search);
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-const STAGE_LABELS = {
-  intro: "Inicio", name: "Nombre", license: "Licencia de conducir",
-  location: "Ciudad / zona", availability: "Disponibilidad", schedule: "Horario",
-  experience: "Experiencia", start_date: "Fecha de inicio", review: "Revisión",
+const LIFECYCLE_LABELS = {
+  intro: "Inicio", review: "Revisión", verifying: "Verificando tus datos…",
   qualified: "Pre-calificado", disqualified: "Descalificado", abandoned: "Abandonado",
 };
 
-function bubble(text, cls) {
+const loc = (text, lang = "es") => (typeof text === "string" ? text : (text && (text[lang] || text.es || text.en)) || "");
+
+function bubble(text, cls, label) {
   const div = document.createElement("div");
   div.className = "bubble " + cls;
-  div.textContent = text;
+  if (label) {
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = label;
+    div.appendChild(who);
+  }
+  const body = document.createElement("div");
+  body.textContent = text;
+  div.appendChild(body);
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
+}
+
+function recruiterBubble(text, author) {
+  return bubble(text, "recruiter", `${author || "Reclutador/a"} · ${lastLang === "en" ? "recruiter" : "equipo de selección"}`);
 }
 
 function showTyping() {
@@ -43,20 +63,34 @@ function speak(text, lang) {
   window.speechSynthesis.speak(u);
 }
 
-function setStage(stage, status) {
-  chipEl.textContent = (STAGE_LABELS[stage] || stage) + (status && status !== "active" ? " · " + status : "");
-  const closed = status && status !== "active";
+function stageLabel(stage) {
+  const questions = (profile && profile.questions) || [];
+  const idx = questions.findIndex((q) => q.id === stage);
+  if (idx >= 0) return `${loc(questions[idx].label, lastLang)} · ${idx + 1}/${questions.length}`;
+  return LIFECYCLE_LABELS[stage] || stage;
+}
+
+function setStage(stage, newStatus, paused) {
+  if (newStatus) status = newStatus;
+  if (paused !== undefined) botPaused = paused;
+  chipEl.textContent = botPaused
+    ? (lastLang === "en" ? "Chatting with a recruiter" : "Hablando con el equipo de selección")
+    : stageLabel(stage) + (status && status !== "active" ? " · " + status : "");
+  // a recruiter can keep talking to a candidate after the screening closed
+  const closed = status && status !== "active" && !botPaused;
   $("text").disabled = closed;
   $("send").disabled = closed;
-  $("end").disabled = closed;
+  $("end").disabled = closed || botPaused;
   $("mic").disabled = closed || !SR;
   if (closed && listening && recognition) recognition.stop();
 }
 
 function renderOutcome(summary) {
   if (!summary) return;
-  const cls = summary.qualified ? "qualified" : summary.outcome === "disqualified" ? "disqualified" : "abandoned";
-  const label = summary.qualified ? "Pre-calificado para entrevista" : summary.outcome === "disqualified" ? "No califica para el puesto" : "Conversación incompleta";
+  const verifying = summary.outcome === "verifying";
+  const cls = summary.qualified ? "qualified" : summary.outcome === "disqualified" ? "disqualified" : verifying ? "verifying" : "abandoned";
+  const label = summary.qualified ? "Pre-calificado para entrevista" : summary.outcome === "disqualified" ? "No califica para el puesto"
+    : verifying ? (lastLang === "en" ? "Verifying your details…" : "Verificando tus datos…") : "Conversación incompleta";
   const el = $("outcome");
   el.innerHTML = "";
   const box = document.createElement("div");
@@ -67,14 +101,20 @@ function renderOutcome(summary) {
   tag.textContent = label;
   h.appendChild(tag);
   box.appendChild(h);
-  if (summary.recruiter_note) {
-    const p = document.createElement("div");
-    p.style.color = "var(--muted)";
-    p.style.fontSize = ".88rem";
-    p.textContent = summary.recruiter_note;
-    box.appendChild(p);
-  }
   el.appendChild(box);
+}
+
+function applyBranding() {
+  if (!profile) return;
+  const brand = $("brand");
+  brand.textContent = "";
+  brand.append(profile.company + " ");
+  const span = document.createElement("span");
+  span.textContent = "· Empleo";
+  brand.appendChild(span);
+  $("role").textContent = `${loc(profile.role, lastLang)} — ${lastLang === "en" ? "assistant" : "asistente"} ${profile.agent_name}`;
+  document.title = `${profile.company} — ${loc(profile.role, lastLang)}`;
+  $("change-job").hidden = profiles.length < 2;
 }
 
 async function api(path, opts) {
@@ -86,12 +126,34 @@ async function api(path, opts) {
 async function pollPending() {
   if (!sessionId) return;
   try {
-    const { messages } = await api(`/api/sessions/${sessionId}/pending`);
+    const { messages, session } = await api(`/api/sessions/${sessionId}/pending`);
     for (const m of messages) {
-      bubble(m.content, "agent nudge");
+      if (m.role === "recruiter") recruiterBubble(m.content, m.author);
+      else bubble(m.content, "agent nudge");
       speak(m.content, lastLang);
     }
+    if (session) {
+      lastLang = session.language || lastLang;
+      const reopened = session.status === "active" && status !== "active";
+      const decided = status === "verifying" && session.status !== "verifying";
+      setStage(session.stage, session.status, session.bot_paused);
+      if (decided) {
+        // the external checks answered: show the final decision
+        const full = await api(`/api/sessions/${sessionId}`).catch(() => null);
+        if (full && full.summary) renderOutcome(full.summary);
+      }
+      if (reopened) {
+        $("outcome").innerHTML = "";
+        $("resume-banner").hidden = true;
+      }
+      if (!session.bot_paused) pausedNoticeShown = false;
+    }
   } catch { /* ignore transient errors */ }
+}
+
+function startPolling() {
+  clearInterval(polling);
+  polling = setInterval(pollPending, 4000);
 }
 
 async function sendText(text) {
@@ -108,13 +170,15 @@ async function sendText(text) {
     typing.remove();
     lastLang = r.language || lastLang;
     if (r.resumed && r.resume_reply) bubble(r.resume_reply, "agent");
-    bubble(r.reply, "agent");
-    speak(r.reply, r.language);
-    setStage(r.stage, r.status);
-    if (r.summary) {
-      renderOutcome(r.summary);
-      clearInterval(polling);
+    if (r.reply) {
+      bubble(r.reply, "agent");
+      speak(r.reply, r.language);
+    } else if (r.paused && !pausedNoticeShown) {
+      bubble(lastLang === "en" ? "A recruiter will reply to you here shortly." : "Una persona del equipo de selección te responderá aquí en breve.", "system");
+      pausedNoticeShown = true;
     }
+    setStage(r.stage, r.status, r.bot_paused);
+    if (r.summary && !r.bot_paused) renderOutcome(r.summary);
   } catch (e) {
     typing.remove();
     bubble("Error: " + e.message, "system");
@@ -160,11 +224,8 @@ $("end").addEventListener("click", async () => {
   try {
     const r = await api(`/api/sessions/${sessionId}/end`, { method: "POST" });
     if (r.reply) { bubble(r.reply, "agent"); speak(r.reply, lastLang); }
-    setStage("abandoned", "abandoned");
-    if (r.summary) {
-      renderOutcome(r.summary);
-      clearInterval(polling);
-    }
+    setStage("abandoned", r.status || "abandoned");
+    if (r.summary) renderOutcome(r.summary);
     if (r.status === "abandoned") $("resume-banner").hidden = false;
   } catch (e) {
     bubble("Error: " + e.message, "system");
@@ -177,11 +238,12 @@ $("resume").addEventListener("click", async () => {
   try {
     const r = await api(`/api/sessions/${sessionId}/resume`, { method: "POST" });
     $("resume-banner").hidden = true;
+    $("outcome").innerHTML = "";
     lastLang = r.language || lastLang;
     bubble(r.reply, "agent");
     speak(r.reply, lastLang);
     setStage(r.stage, r.status);
-    if (!polling) polling = setInterval(pollPending, 15000);
+    startPolling();
   } catch (e) {
     bubble("No se pudo retomar: " + e.message, "system");
     $("resume").disabled = false;
@@ -191,49 +253,109 @@ $("resume").addEventListener("click", async () => {
 function renderHistory(messages) {
   for (const m of messages) {
     if (m.role === "assistant") bubble(m.content, m.delivered ? "agent" : "agent nudge");
+    else if (m.role === "recruiter") recruiterBubble(m.content, m.author);
     else if (m.role === "user") bubble(m.content, "user");
   }
 }
 
-async function restoreSession(id) {
-  const s = await api(`/api/sessions/${id}`);
-  sessionId = s.session_id || id;
-  lastLang = s.language || "es";
-  renderHistory(s.messages || []);
-  setStage(s.stage, s.status);
-  if (s.summary) renderOutcome(s.summary);
-  if (s.status === "abandoned") $("resume-banner").hidden = false;
-  polling = setInterval(pollPending, 15000);
+function showChat() {
+  $("job-picker").hidden = true;
+  $("chat").hidden = false;
 }
 
-async function startFresh() {
+async function restoreSession(id) {
+  const s = await api(`/api/sessions/${id}`);
+  sessionId = s.id || id;
+  profile = profiles.find((p) => p.id === s.profile_id) || (s.profile ? { ...s.profile, questions: [] } : null);
+  lastLang = s.language || "es";
+  localStorage.setItem(sessionKey(s.profile_id), sessionId);
+  applyBranding();
+  showChat();
+  renderHistory(s.messages || []);
+  setStage(s.stage, s.status, !!s.bot_paused);
+  if (s.summary && !s.bot_paused) renderOutcome(s.summary);
+  if (s.status === "abandoned" && !s.bot_paused) $("resume-banner").hidden = false;
+  // undelivered messages were just rendered from history: mark them delivered
+  await api(`/api/sessions/${sessionId}/pending`).catch(() => {});
+  startPolling();
+}
+
+async function startFresh(profileId) {
   const s = await api("/api/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "web" }),
+    body: JSON.stringify({ source: "web", profile_id: profileId }),
   });
   sessionId = s.session_id;
-  localStorage.setItem(SESSION_KEY, sessionId);
+  profile = profiles.find((p) => p.id === s.profile_id) || profile;
+  localStorage.setItem(sessionKey(s.profile_id), sessionId);
   lastLang = s.language || "es";
+  applyBranding();
+  showChat();
   bubble(s.reply, "agent");
   speak(s.reply, lastLang);
-  setStage(s.stage, "active");
-  polling = setInterval(pollPending, 15000);
+  setStage(s.stage, "active", false);
+  startPolling();
 }
 
-async function init() {
-  const saved = localStorage.getItem(SESSION_KEY);
+async function openJob(profileId) {
+  const saved = localStorage.getItem(sessionKey(profileId))
+    || (profileId === "delivery_courier" ? localStorage.getItem(LEGACY_SESSION_KEY) : null);
   if (saved) {
     try {
       await restoreSession(saved);
       return;
     } catch {
-      localStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem(sessionKey(profileId));
     }
   }
+  await startFresh(profileId);
+}
+
+function showPicker() {
+  $("chat").hidden = true;
+  $("job-picker").hidden = false;
+  const jobs = $("jobs");
+  jobs.innerHTML = "";
+  for (const p of profiles) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "job";
+    card.dataset.job = p.id;
+    const title = document.createElement("strong");
+    title.textContent = loc(p.role);
+    const company = document.createElement("span");
+    company.className = "company";
+    company.textContent = p.company;
+    const summary = document.createElement("span");
+    summary.className = "summary";
+    summary.textContent = loc(p.summary);
+    card.append(title, company, summary);
+    card.addEventListener("click", () => {
+      history.replaceState(null, "", `/?job=${encodeURIComponent(p.id)}`);
+      openJob(p.id).catch((e) => bubble("No se pudo conectar con el agente: " + e.message, "system"));
+    });
+    jobs.appendChild(card);
+  }
+}
+
+async function init() {
   try {
-    await startFresh();
+    const data = await api("/api/profiles");
+    profiles = data.profiles || [];
+    const job = params.get("job");
+    const linked = params.get("session");
+    if (linked) {
+      await restoreSession(linked);
+    } else if (job && profiles.some((p) => p.id === job)) {
+      await openJob(job);
+    } else if (profiles.length === 1) {
+      await openJob(profiles[0].id);
+    } else {
+      showPicker();
+    }
   } catch (e) {
+    showChat();
     bubble("No se pudo conectar con el agente: " + e.message, "system");
   }
 }

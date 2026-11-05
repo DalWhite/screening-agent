@@ -74,7 +74,7 @@ def test_full_qualified_screening_over_voice(channel):
     assert "<Gather" not in twiml
     assert "<Hangup" in twiml
     row = db.get_session(sid)
-    assert row["stage"] == Stage.QUALIFIED.value
+    assert row["stage"] == Stage.QUALIFIED
     assert row["summary"]["qualified"] is True
 
 
