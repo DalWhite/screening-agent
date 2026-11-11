@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simulador de canales · WhatsApp y llamadas</title>
+  <link rel="stylesheet" href="/sim/static/sim.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <strong>Simulador de canales</strong>
+      <span class="muted" id="config"></span>
+    </div>
+    <nav class="links">
+      <a id="backoffice-link" target="_blank" rel="noopener">Backoffice ↗</a>
+      <a href="/sim/docs" target="_blank" rel="noopener">API ↗</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <aside class="phones" aria-label="Teléfonos">
+      <h2>Teléfonos</h2>
+      <ul id="phone-list"></ul>
+      <form id="add-phone" class="stack">
+        <input name="number" aria-label="Número de teléfono" placeholder="+34600111222" required>
+        <input name="name" aria-label="Nombre del contacto" placeholder="Nombre (opcional)">
+        <div class="row">
+          <button type="submit">Añadir</button>
+          <button type="button" id="random-phone" class="ghost">Aleatorio</button>
+        </div>
+      </form>
+
+      <h2>Fallos del proveedor</h2>
+      <div class="stack faults" id="faults">
+        <label><input type="checkbox" data-fault="rest_down"> API caída (Twilio 503 / Meta código 2)</label>
+        <label><input type="checkbox" data-fault="enforce_window"> Aplicar ventana de 24 h (63016 / 131047)</label>
+        <label><input type="checkbox" data-fault="stt_down"> Transcripción de voz caída</label>
+        <label data-provider="twilio"><input type="checkbox" data-fault="template_only"> Remitente solo plantillas (21654)</label>
+        <label data-provider="twilio">Error de ventana (Twilio)
+          <select data-fault="window_errors" aria-label="Error de ventana">
+            <option value="sync">síncrono (rechazo en la API)</option>
+            <option value="async">asíncrono (aceptado y fallido)</option>
+          </select>
+        </label>
+        <label>Timeout de webhook (s)
+          <input type="number" min="1" max="60" step="1" data-fault="webhook_timeout" aria-label="Timeout de webhook">
+        </label>
+      </div>
+      <button type="button" id="meta-verify" class="ghost" data-provider="meta" title="Lo que hace Meta al guardar la URL del webhook">Verificar webhook (Meta)</button>
+      <button type="button" id="reset" class="ghost danger">Reiniciar simulador</button>
+    </aside>
+
+    <section class="devices" id="devices">
+      <p class="empty" id="no-phone">Añade un teléfono para empezar: el mismo número puede escribir por WhatsApp y llamar.</p>
+
+      <div class="device whatsapp" id="wa" hidden>
+        <header>
+          <div>
+            <strong>WhatsApp</strong>
+            <span class="muted" id="wa-title"></span>
+          </div>
+          <div class="row">
+            <span class="pill" id="wa-window"></span>
+            <button type="button" class="ghost small" id="close-window" title="Simula que el último mensaje del candidato fue hace más de 24 h">Cerrar ventana 24 h</button>
+          </div>
+        </header>
+        <ol class="thread" id="wa-thread" aria-label="Conversación de WhatsApp" aria-live="polite"></ol>
+        <form class="composer" id="wa-form">
+          <button type="button" class="ghost" id="wa-media" title="Enviar una foto (el texto escrito va como pie de foto)">📷</button>
+          <button type="button" class="ghost" id="wa-voice" title="Enviar como nota de voz lo que has escrito">🎤</button>
+          <button type="button" class="ghost" id="wa-record" title="Grabar una nota de voz real con el micrófono (necesita un STT real en la app)" hidden>⏺</button>
+          <textarea id="wa-text" rows="1" aria-label="Mensaje de WhatsApp" placeholder="Escribe un mensaje (o dilo en una nota de voz 🎤)"></textarea>
+          <select id="wa-lang" aria-label="Idioma de la nota de voz" title="Idioma de la nota de voz"><option>es</option><option>en</option></select>
+          <button type="submit" id="wa-send">Enviar</button>
+        </form>
+      </div>
+
+      <div class="device voice" id="voice" hidden>
+        <header>
+          <div>
+            <strong>Llamada</strong>
+            <span class="muted" id="call-title"></span>
+          </div>
+          <label class="small"><input type="checkbox" id="tts"> 🔊 Leer en voz alta</label>
+        </header>
+        <ol class="transcript" id="call-transcript" aria-label="Transcripción de la llamada" aria-live="polite"></ol>
+        <div class="call-status" id="call-status"></div>
+        <form class="composer" id="call-form">
+          <button type="button" class="ghost" id="mic" title="Dictar con el micrófono (Chrome)" hidden>🎤</button>
+          <input id="call-text" aria-label="Lo que dices" placeholder="Lo que dices al teléfono" autocomplete="off">
+          <button type="submit" id="speak">Hablar</button>
+        </form>
+        <div class="row call-actions">
+          <button type="button" id="dial" class="call">📞 Llamar</button>
+          <button type="button" id="silence" class="ghost">Silencio</button>
+          <button type="button" id="hangup" class="hang">Colgar</button>
+        </div>
+        <details id="past-calls" hidden>
+          <summary>Llamadas anteriores</summary>
+          <div id="past-calls-list"></div>
+        </details>
+      </div>
+    </section>
+
+    <aside class="log" aria-label="Tráfico de webhooks y APIs">
+      <h2>Tráfico <span class="muted small">(webhooks y APIs de Twilio, Meta y STT)</span></h2>
+      <label class="small"><input type="checkbox" id="log-phone-only" checked> Solo este teléfono</label>
+      <ol id="log"></ol>
+    </aside>
+  </main>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script type="module" src="/sim/static/sim.js"></script>
+</body>
+</html>

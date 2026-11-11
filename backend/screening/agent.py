@@ -80,6 +80,31 @@ class SessionState:
     disqualify_reason: Optional[str] = None
     close_reason: Optional[str] = None
     bot_paused: bool = False  # human takeover from the backoffice: the agent listens but does not reply
+    # Channel continuity: `source` is where the screening started (analytics); a candidate can carry on
+    # from the same phone number on another channel (WhatsApp <-> voice, recruiter referral -> WhatsApp).
+    channel: Optional[str] = None  # channel of the latest contact (None = source)
+    channels: list[str] = field(default_factory=list)  # every channel used, in order of first use
+    # Per-channel bookkeeping owned by the channel adapters (e.g. when the candidate last wrote on
+    # WhatsApp, for its 24h window). Opaque to the agent; persisted with the session.
+    channel_state: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    @property
+    def current_channel(self) -> str:
+        return self.channel or self.source
+
+    def reachable_on(self, channel: str) -> bool:
+        """Has the candidate talked to us on ``channel`` (so we may push there)?"""
+        return channel == self.source or channel in self.channels
+
+    def use_channel(self, channel: str) -> Optional[str]:
+        """Record the channel of this contact; returns the previous channel when it changed."""
+        previous = self.current_channel
+        if not self.channels:
+            self.channels.append(self.source)
+        if channel not in self.channels:
+            self.channels.append(channel)
+        self.channel = channel
+        return previous if previous != channel else None
 
     def attempts_for(self, stage: str) -> int:
         return self.attempts.get(stage, 0)
@@ -117,7 +142,7 @@ class ScreeningAgent:
                     contact: Optional[str] = None, profile_id: Optional[str] = None) -> SessionState:
         profile = self.profiles.get(profile_id)
         state = SessionState(id=str(uuid.uuid4()), profile_id=profile.id, profile_revision=profile.revision,
-                             source=source, contact=contact)
+                             source=source, contact=contact, channel=source, channels=[source])
         lang = language if language in ("es", "en") else profile.default_language
         state.language = Lang(lang if lang in ("es", "en") else "es")
         return state

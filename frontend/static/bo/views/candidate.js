@@ -30,6 +30,12 @@ const TECHNICAL_EVENTS = new Set(["validation_fail", "location_match", "field_fa
   "rag_hit", "rag_miss", "phrasing_fallback", "llm_error", "stage_advance", "ignored_after_close", "give_up_field",
   "channel_session_started"]);
 
+// Where the screening started, then every other channel the candidate used (same phone number).
+function channelsLabel(c) {
+  const channels = c.channels?.length ? c.channels : [c.source];
+  return channels.map(sourceLabel).join(" → ");
+}
+
 export async function renderCandidate(root, id, params) {
   await loadMeta();
   let tab = TABS.some((t) => t.id === params.get("tab")) ? params.get("tab") : "summary";
@@ -71,7 +77,7 @@ export async function renderCandidate(root, id, params) {
             profileChip(c.profile_id), statusChip(c.status),
             c.display_city ? h("span", { class: "meta" }, icon("pin", 14), c.display_city) : null,
             c.contact ? h("span", { class: "meta" }, icon("phone", 14), c.contact) : null,
-            h("span", { class: "meta" }, icon("message", 14), sourceLabel(c.source)),
+            h("span", { class: "meta" }, icon("message", 14), channelsLabel(c)),
             c.bot_paused ? chip("Atendido por reclutador", "info") : null)),
         h("div", { class: "cand-score" }, scoreBadge(c.score, true), h("span", { class: "muted small" }, "puntuación"))),
       h("div", { class: "cand-actions" },
@@ -160,7 +166,7 @@ export async function renderCandidate(root, id, params) {
           h("section", { class: "panel-card" },
             h("div", { class: "section-title" }, h("h3", {}, "Información")),
             h("dl", { class: "info-list" },
-              info("Canal", sourceLabel(c.source)), info("Contacto", c.contact || "—"),
+              info("Canal", channelsLabel(c)), info("Contacto", c.contact || "—"),
               info("Idiomas", (c.languages || [c.language]).join(", ") || c.language),
               info("Inicio", fmtDateTime(c.started_at)), info("Última actividad", fmtDateTime(c.last_ts)),
               info("Duración", fmtDuration(c.duration_seconds)), info("Turnos", String(c.candidate_turns ?? 0)),
@@ -352,17 +358,56 @@ export async function renderCandidate(root, id, params) {
   function bubble(m) {
     const cls = m.role === "user" ? "cand" : m.role === "recruiter" ? "recruiter" : "bot";
     const who = m.role === "user" ? (c.display_name || "Candidato") : m.role === "recruiter" ? `${m.author || "Reclutador"} (reclutador)` : c.profile.agent_name;
-    return h("div", { class: `msg ${cls}`, testid: `msg-${cls}` },
-      h("div", { class: "msg-meta" }, who, " · ", h("time", { datetime: m.ts, title: m.ts }, fmtDateTime(m.ts))),
+    const detail = messageDetail(m);
+    return h("div", { class: `msg ${cls} kind-${m.kind || "text"}`, testid: `msg-${cls}`, "data-channel": m.channel || "" },
+      h("div", { class: "msg-meta" }, who, " · ", h("time", { datetime: m.ts, title: m.ts }, fmtDateTime(m.ts)),
+        detail ? h("span", { class: "msg-kind", testid: "msg-kind" }, ` · ${detail}`) : null,
+        m.role !== "user" && !m.delivered ? h("span", { class: "msg-kind" }, " · pendiente de entrega") : null,
+        m.delivered === 3 ? h("span", { class: "msg-kind" }, " · no enviado: el candidato volvió antes") : null),
       h("div", { class: "msg-body" }, m.content));
   }
 
+  // How the line was said: voice note transcript, speech on a call, media placeholder, re-prompt...
+  function messageDetail(m) {
+    const meta = m.meta || {};
+    switch (m.kind) {
+      case "voice_note": return meta.transcribed === false ? "🎤 nota de voz (sin transcribir)"
+        : `🎤 nota de voz transcrita${meta.duration ? ` (${Math.round(meta.duration)} s)` : ""}`;
+      case "speech": return `📞 dicho en la llamada${meta.confidence != null ? ` · confianza ${Math.round(meta.confidence * 100)}%` : ""}`;
+      case "media": return meta.caption ? "📎 adjunto con texto (no guardado)" : "📎 adjunto no guardado";
+      case "reprompt": return "silencio en la llamada: repregunta";
+      case "notice": return "aviso";
+      case "nudge": return "recordatorio automático";
+      default: return "";
+    }
+  }
+
+  // One divider each time the conversation moves to another channel (WhatsApp, phone, web...).
+  function withChannelDividers(messages) {
+    const out = [];
+    let current = null;
+    for (const m of messages) {
+      if (m.channel && m.channel !== current) {
+        out.push(h("div", { class: "channel-divider", testid: "channel-divider" }, sourceLabel(m.channel)));
+        current = m.channel;
+      }
+      out.push(bubble(m));
+    }
+    return out;
+  }
+
   function renderConversation() {
-    const transcript = h("div", { class: "transcript", testid: "transcript", "aria-live": "polite" }, c.messages.map(bubble));
-    const channelHint = {
-      web: "Se entrega en el chat web del candidato.", backoffice: "Se entrega cuando el candidato abra su enlace.",
-      whatsapp: "Se envía por WhatsApp.", voice: "Habló por teléfono: el mensaje queda en su historial.",
-    }[c.source] || "";
+    const transcript = h("div", { class: "transcript", testid: "transcript", "aria-live": "polite" }, withChannelDividers(c.messages));
+    // Channels we can write to first (ChannelHub.describe): WhatsApp today, whatever the provider.
+    const active = store.meta?.channels || {};
+    const pushable = Object.keys(active).filter((ch) => active[ch].push);
+    const used = c.channels?.length ? c.channels : [c.source];
+    const via = used.slice().reverse().find((ch) => pushable.includes(ch));
+    const later = pushable.length ? `le llega si escribe por ${pushable.map(sourceLabel).join(" o ")}` : "queda en su historial";
+    const channelHint = via ? `Se envía por ${sourceLabel(via)}.` : ({
+      web: "Se entrega en el chat web del candidato.",
+      backoffice: `Se entrega cuando el candidato abra su enlace${pushable.length ? ` o escriba por ${pushable.map(sourceLabel).join(" o ")}` : ""}.`,
+    }[c.source] || (used.includes("voice") ? `Habló por teléfono: el mensaje ${later}.` : ""));
     const text = h("textarea", { rows: 2, placeholder: "Escribe al candidato…  (Ctrl+Enter para enviar)", "aria-label": "Mensaje al candidato", maxlength: 1000 });
     const pause = h("input", { type: "checkbox", checked: true });
     const send = button("Enviar", { icon: "send", variant: "primary", size: "sm", testid: "send-message", onClick: async () => {
@@ -460,6 +505,14 @@ export async function renderCandidate(root, id, params) {
       case "recruiter_reopen": return [`${by} reabrió el screening`, `pregunta: ${p.question}`, "recruiter"];
       case "created_by_recruiter": return [`${by} dio de alta al candidato`, "", "recruiter"];
       case "session_close": return [`Screening cerrado: ${p.outcome}`, p.reason ? flagLabel(p.reason) : "", "system"];
+      case "voice_call_started": return ["Llamada del candidato", "", "system"];
+      case "whatsapp_delivery_failed": return ["WhatsApp no pudo entregar un mensaje",
+        [p.error_code ? `error ${p.error_code}` : "", p.detail, p.kind === "nudge" ? "recordatorio" : "queda en cola hasta que el candidato escriba"].filter(Boolean).join(" · "), "warn"];
+      case "whatsapp_template_fallback": return ["Enviado como plantilla de WhatsApp",
+        String(p.reason || "").includes("window") || String(p.reason || "").includes("131047") || String(p.reason || "").includes("63016")
+          ? "fuera de la ventana de 24 h" : (p.reason || ""), "info"];
+      case "voice_call_ended": return ["Llamada finalizada", p.stage ? `en «${p.stage}»` : "", "system"];
+      case "channel_switch": return [`El candidato cambió de canal: ${sourceLabel(p.from)} → ${sourceLabel(p.to)}`, p.stage ? `en «${p.stage}»` : "", "info"];
       case "session_resume": return ["El candidato retomó la conversación", p.stage ? `en «${p.stage}»` : "", "system"];
       case "rule_triggered": return [`Regla activada: ${flagLabel(p.rule)}`, p.action === "disqualify" ? "eliminatoria" : "alerta", p.action === "disqualify" ? "bad" : "warn"];
       case "needs_review": return ["Necesita revisión", `faltan: ${(p.missing || []).join(", ")}`, "warn"];

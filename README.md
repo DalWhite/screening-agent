@@ -9,7 +9,7 @@ One engine runs **many recruiting processes**. Each process is a declarative *sc
 | `delivery_courier` | Grupo Sazón | Delivery drivers in 45 ES/MX cities: licence (knockout + manual, non-blocking licence check by a recruiter), area, availability, shift, experience, start date |
 | `construction_laborer` | Constructora Horizonte | **Low-qualification construction labourers**: 18+ and right to work (legal knockouts), **ID document verified asynchronously against an identity registry** (blocking), site area, physical work (flag for review, not a rejection), PRL safety course (flag; the company trains), trades experience, transport, start date |
 
-Docs: `docs/screening_profiles.md` (how to configure a process), `docs/external_checks.md` (asynchronous validations), `docs/backoffice.md` (recruiter portal), `docs/process_design.md`, `docs/architecture.md`, `docs/channels.md`, `docs/ats_integration_api.md`, `docs/load_testing.md` (concurrency & resource usage).
+Docs: `docs/channel_architecture.md` (channels, providers, adding one), `docs/screening_profiles.md` (how to configure a process), `docs/external_checks.md` (asynchronous validations), `docs/backoffice.md` (recruiter portal), `docs/process_design.md`, `docs/architecture.md`, `docs/channels.md`, `docs/simulators.md` (local WhatsApp/phone simulator), `docs/ats_integration_api.md`, `docs/load_testing.md` (concurrency & resource usage).
 
 ## Quick start
 
@@ -91,56 +91,68 @@ Key properties:
 - **RAG**: BM25 over each profile's FAQ; answers only from retrieved context.
 - **Re-engagement & resume**: silent candidates are nudged and then closed as abandoned; they can resume within 48h.
 - **Human takeover**: recruiters can pause the assistant and talk to the candidate on the same channel. Nudges stop, and safety guardrails keep working.
-- **Channels**: web, WhatsApp and voice (Twilio), each number bound to a process (`WHATSAPP_PROFILE`, `VOICE_PROFILE`).
+- **Channels**: web, WhatsApp (through **Twilio or directly through Meta's Cloud API**, `WHATSAPP_PROVIDER`) and voice (**Twilio or Vonage**, `VOICE_PROVIDER`). Provider logic is isolated in adapters (`docs/channel_architecture.md`): the agent and the channels never see a wire format, providers are swapped by configuration, and a new one is a registered adapter + simulator plugin that the whole test suite then runs against; each number bound to a process (`WHATSAPP_PROFILE`, `VOICE_PROFILE`). A candidate can **switch channel mid-screening** (WhatsApp ↔ phone, recruiter referral → WhatsApp) and carries on where they stopped; **WhatsApp voice notes** are transcribed (any OpenAI-compatible STT) and answered like text. The **conversation registry** stores every line on every channel, in order, with its channel and kind (speech with STT confidence, voice-note transcript, media placeholder…), and a **delivery registry** tracks every push until it is read, with template fallback when a message fails outside WhatsApp's 24h window.
 
 ## Tests
 
 ```bash
-python -m pytest                        # 269 unit/API/scenario tests (tests/), no network, ~30s
-python tests/evals/run_evals.py         # 12 scripted conversation evals, both processes -> tests/evals/report.json
-python scripts/validate_profiles.py     # validate every screening profile (CI-friendly exit code)
+pip install -r requirements-dev.txt && python -m playwright install chromium  # once: pytest-playwright + Chromium for e2e/stress
+
+python -m pytest                      # default: unit + integration (555) — no network, no browser, ~1 min
+python -m pytest -m unit              #   unit (309): one component at a time, everything else faked
+python -m pytest -m integration       #   integration (246): the whole app in-process; WhatsApp / phone through the
+                                      #   channel simulator, every story on every registered provider
+python -m pytest -m e2e               # e2e (127): live local servers + Chromium — candidate chat, backoffice,
+                                      #   WhatsApp / phone candidates with a recruiter in the browser (~5 min)
+python -m pytest -m channels          #   only the WhatsApp / phone e2e tests (73, ~3 min)
+python -m pytest -m e2e --headed --slowmo 300   # watch the browser tests run
+python -m pytest -m stress -s         # load (2 scenarios, opt-in): ~100 candidates + ~10 recruiters, CPU / RSS /
+                                      #   latency report in tests/stress/reports/ (docs/load_testing.md)
+python tests/evals/run_evals.py       # 12 scripted conversation evals, both processes -> tests/evals/report.json
+python scripts/validate_profiles.py   # validate every screening profile (CI-friendly exit code)
 ```
 
-### End-to-end (Playwright)
+Everything lives under `tests/`, one folder per layer; a test's marker comes from its folder (`tests/conftest.py`):
 
-```bash
-pip install -r requirements-dev.txt
-python -m playwright install chromium
-python -m pytest e2e                    # 54 browser tests against a live local server (~2-3 min)
-python -m pytest e2e --headed --slowmo 300   # watch them run
-```
+| Folder | What | Marker |
+|---|---|---|
+| `tests/unit/` | One component, everything else faked: `screening/` (engine, fields, validation, language, guardrails, RAG, profiles), `channels/` (web, messaging, continuity, takeover), `integrations/` (Twilio client + voice, Vonage), `simulators/` (the simulators behave like Twilio / Meta / Vonage / STT), `verifications/`, `storage/`, `llm/`, `scripts/` | `unit` |
+| `tests/integration/` | The whole app in-process (FastAPI `TestClient`, MockLLM, throwaway SQLite): `api/` (backoffice, pipeline, processes, check callbacks), `channels/` (channel stories, conversation registry, voice notes, deliveries, robustness, architecture rules) — channels through the simulator, on every registered provider | `integration` |
+| `tests/e2e/` | Live servers + a real browser: `candidate/` (chat, external checks), `backoffice/` (pipeline, candidate file, search, analytics, processes), `channels/` (journeys, recruiter stories, resilience, simulator UI) | `e2e`, `channels` |
+| `tests/stress/` | Concurrency and resource usage (opt-in) | `stress` |
+| `tests/evals/` | Scripted conversation evals (a script) | — |
+| `tests/support/` | Helpers shared by the layers: candidate scripts, browser helpers, channel stacks | — |
 
-The e2e suite starts its own server (MockLLM, throwaway database, random port, mock ID registry answering in 1s); there's nothing to set up. It covers:
+The e2e and stress tests start their own servers (MockLLM, throwaway databases, random ports, mock ID registry answering in 1s; channel tests also start app + channel-simulator pairs per configuration): nothing to set up. On failure, `--tracing retain-on-failure` keeps a Playwright trace in `test-results/`.
 
-| File | Objective |
+What the main suites cover:
+
+| Tests | Objective |
 |---|---|
-| `e2e/test_candidate_chat.py` | Multi-process engine: job picker, construction screening (qualified after the async ID check, underage knockout, out-of-area retry + waitlist, FAQ, English), courier regression, reload |
-| `e2e/test_backoffice_pipeline.py` | Pipeline management & manual interaction: board placement, drag & drop, card menu, **quick view triage**, **stages edited in place** (rename, recolour, add, reorder, delete moving candidates), busy columns scroll and link to the full list, interview scheduling, **two-browser takeover** (recruiter ↔ candidate live), reopening a rejected candidate, manual candidate + screening link |
-| `e2e/test_backoffice_candidate.py` | Candidate profile (data, corrections with audit + re-score, owner/tags/notes) and screening results (answers, literal quotes, rules, score, knockouts, timeline) |
-| `e2e/test_backoffice_search.py` | Advanced search: accent-insensitive, conversation search, filter chips + collapsible *Más filtros* + active-filter pills / *Limpiar*, shareable URLs, score range + sorting, saved views, inline stage change, global search, bulk actions, CSV export |
-| `e2e/test_backoffice_analytics.py` | Analytics drill-down: KPI cards and chart rows open the candidate list with the same filters and the same counts |
-| `e2e/test_backoffice_processes.py` | Process CRUD in the **basic / advanced editor**: edit a question and publish a revision (running candidates stay pinned), add a knockout rule and try it in the simulator, per-cell problems block publication / discard, scoring + settings, create a process from scratch and screen with it, duplicate/delete, deactivate, restore a revision |
-| `e2e/test_external_checks.py` | Asynchronous checks: local control-letter validation, registry knockout arriving mid-chat, **blocking manual check decided by a recruiter while the candidate waits** (two browsers), registry failure → review → retry → manual resolution, non-blocking manual licence check, ID never shown in clear, recruiter correction re-verifies |
+| `tests/e2e/candidate/test_chat.py` | Multi-process engine: job picker, construction screening (qualified after the async ID check, underage knockout, out-of-area retry + waitlist, FAQ, English), courier regression, reload |
+| `tests/e2e/candidate/test_external_checks.py` | Asynchronous checks: local control-letter validation, registry knockout arriving mid-chat, **blocking manual check decided by a recruiter while the candidate waits** (two browsers), registry failure → review → retry → manual resolution, non-blocking manual licence check, ID never shown in clear, recruiter correction re-verifies |
+| `tests/e2e/backoffice/test_pipeline.py` | Pipeline management & manual interaction: board placement, drag & drop, card menu, **quick view triage**, **stages edited in place**, busy columns, interview scheduling, **two-browser takeover**, reopening a rejected candidate, manual candidate + screening link |
+| `tests/e2e/backoffice/test_candidate.py` | Candidate profile (data, corrections with audit + re-score, owner/tags/notes) and screening results (answers, literal quotes, rules, score, knockouts, timeline) |
+| `tests/e2e/backoffice/test_search.py` | Advanced search: accent-insensitive, conversation search, filter chips, *Más filtros*, shareable URLs, score range + sorting, saved views, inline stage change, global search, bulk actions, CSV export |
+| `tests/e2e/backoffice/test_analytics.py` | Analytics drill-down: KPI cards and chart rows open the candidate list with the same filters and counts |
+| `tests/e2e/backoffice/test_processes.py` | Process CRUD in the **basic / advanced editor**: revisions (running candidates stay pinned), rules tried in the simulator, per-cell problems, scoring + settings, create / duplicate / delete / deactivate, restore a revision |
+| `tests/e2e/channels/` | **WhatsApp and phone candidates through the local channel simulator, on every registered provider**: journeys checked line for line (incl. a stack without Twilio), recruiter ↔ candidate stories, restarts / crashes / redeliveries, outages and the 24h window, tunnels and a wrong `PUBLIC_BASE_URL`, real-time nudges, many candidates on both channels at once, the simulator's UI |
+| `tests/integration/channels/test_stories.py` | Recruiting stories: full screenings on WhatsApp and by phone, ID checks pushed mid-conversation, slow turns, nudges and template fallback, takeover, **channel switching** (WhatsApp ↔ phone, referral → WhatsApp, different processes per line), forged webhooks |
+| `tests/integration/channels/test_conversation_registry.py` | **Nothing is lost across channels**: the stored transcript equals what the simulated candidate lived, line for line |
+| `tests/integration/channels/test_voice_notes.py`, `test_meta_and_deliveries.py`, `test_robustness.py` | Voice notes and media; Meta specifics and the delivery registry; ordering, restarts, retries, stale nudges, concurrent receipts |
+| `tests/integration/channels/test_architecture.py` | The architecture's rules: the core never imports vendor code, every registered provider has a simulator plugin and is in the test matrix, adapters implement the interface, channels on/off/swapped by configuration, a toy provider plugs in without touching the core |
+| `tests/stress/` | ~100 candidates (organic scripts over HTTP) + ~10 recruiters (headless browsers) against one server: correctness is asserted, responsiveness reported (`docs/load_testing.md`: correct and stable at 100 / 10 on 4 cores; recruiter pages slow to seconds — a single-process thread-pool limit) |
 
-On failure, `--tracing retain-on-failure` keeps a Playwright trace in `test-results/`.
-
-### Load testing: does it hold up under concurrency?
+### WhatsApp and phone without Twilio or Meta: the local channel simulator
 
 ```bash
-python -m pytest e2e/stress -m stress -s     # opt-in: not part of `pytest` or `pytest e2e` by default
+python -m simulators --with-app --mock-llm                           # WhatsApp through Twilio, calls through Twilio
+python -m simulators --with-app --mock-llm --whatsapp-provider meta  # WhatsApp through Meta's Cloud API
+python -m simulators --with-app --mock-llm --voice-provider vonage    # calls through Vonage
+# http://127.0.0.1:8900 phones (WhatsApp text, voice notes, photos, calls) · http://127.0.0.1:8000/backoffice
 ```
 
-`e2e/stress/` runs ~100 candidates (organic, varied scripts through plain HTTP — knockouts,
-reviews, FAQ, bilingual, drop-offs) and ~10 recruiters (real headless browsers: board, search,
-quick view, stage moves, notes, analytics, CSV export, manual candidates) against the same server,
-database and background workers as production, and measures it from the outside: server CPU/RSS/
-thread count over time, and latency/throughput/error-rate per endpoint and per recruiter action.
-It asserts correctness (no crash, no lost or corrupted data, background workers keep working) is
-unconditional, while responsiveness is reported, not gated — see `docs/load_testing.md` for what we
-found (short version: correct and stable at 100 candidates / 10 recruiters on a 4-core machine, but
-recruiter pages slow to several seconds and some requests queue past 15-30s — a single-process
-thread-pool limit, not a SQLite or correctness problem) and what to change if that volume is a real
-target.
+`simulators/` plays Twilio, Meta's Cloud API, Vonage Voice and a speech-to-text service locally, for manual testing and for the integration / e2e tests: signed webhooks, TwiML / NCCO executed like the providers do, fake REST / Graph APIs with each provider's error codes and asynchronous delivery receipts, playable simulated voice notes, fault injection. See `docs/simulators.md`.
 
 ## Adding a new recruiting process
 
@@ -168,30 +180,40 @@ For processes that should live in the repository, add a seed folder `backend/dat
 
 ```
 backend/
-  app.py               FastAPI app: chat API, profiles API, Twilio webhooks
+  app.py               FastAPI assembly: lifespan wiring, routers, pages, health / profiles / analytics
   config.py            .env-driven settings
-  pipeline.py          recruiter pipeline stages + automatic placement
-  session_store.py     in-memory registry backed by SQLite
-  reengagement.py      silence monitor (skips human takeovers)
+  api/sessions.py      the candidate session API: the web channel's transport (browser chat, ATS)
+  channels/            conversation logic per channel, vendor-neutral (docs/channel_architecture.md):
+                         web.py WebChannel · messaging.py MessagingChannel (WhatsApp) · voice.py VoiceChannel
+                         base.py sessions + continuity · contracts.py what integrations hand / implement
+                         hub.py ChannelHub: configured channels, outbound routing
+  integrations/        vendor code, one package per vendor: client.py (their API) + <channel>.py (their webhooks)
+                         twilio/ (client, whatsapp, voice, webhooks) · meta/ (client, whatsapp) · vonage/ (voice)
+                         speech/ (speech-to-text client) · registry.py (WHATSAPP_PROVIDER / VOICE_PROVIDER)
   screening/           agent.py (generic engine), profile.py (profiles, rules, checks, scoring, registry),
                        fields.py (typed field handlers incl. id_document), prompts.py, validation.py,
                        language.py, guardrails.py, service_areas.py, rag.py
   backoffice/          router.py (/api/bo), service.py (recruiter actions), profiles_admin.py
                        (process CRUD, drafts, publish, simulator), report.py, labels.py, auth.py
-  verifications/       service.py (outbox worker), providers.py (mock registry, webhook, manual)
-  channels/            WhatsApp + voice (Twilio)
+  verifications/       service.py (outbox worker), providers.py (ID checks: mock registry, webhook, manual)
   llm/client.py        OpenAI-compatible client (profile-built tool), MockLLM
-  storage/             db.py (SQLite persistence, migrations, search, editable pipeline stages), profile_store.py (revisions, drafts)
+  storage/             db.py (SQLite persistence, migrations, search, pipeline stages, message + delivery registry),
+                       profile_store.py (revisions, drafts)
   analytics/metrics.py funnel / drop-off / pipeline metrics per process
+  session_store.py     in-memory registry backed by SQLite · reengagement.py silence monitor · pipeline.py stages
   data/profiles/       one folder per recruiting process (profile.json, faq.json, service_areas.json)
 frontend/
   index.html, static/chat.js              candidate chat (job picker, voice, recruiter messages)
   backoffice.html, static/bo/             recruiter backoffice (ES modules, no build step):
                                           backoffice.css (design system), dom.js + icons.js (UI kit),
                                           shared.js (stages, pills), views/*.js (one per screen)
-tests/                 pytest suite + evals/
-e2e/                   Playwright end-to-end suite; e2e/stress/ = opt-in load tests (docs/load_testing.md)
-scripts/               seed_demo_data.py (demo volume), validate_profiles.py, generate_samples.py, check_twilio.py
+simulators/            local stand-ins for the vendors (docs/simulators.md), mirroring backend/integrations/:
+                         core.py ChannelSimulator (phones, calls, media, log) · twilio.py · meta.py · vonage.py
+                         speech.py (voice notes, STT service, phone STT) · twiml.py · server.py + static/ (UI)
+                         runner.py (processes) · testing.py (pytest harness) · __main__.py (python -m simulators)
+tests/                 unit/ · integration/ · e2e/ · stress/ · evals/ · support/ (see Tests)
+scripts/               seed_demo_data.py (demo volume), validate_profiles.py, generate_samples.py, check_twilio.py,
+                       smoke_chat_api.py (a scripted chat against a running server)
 docs/                  design + operations docs
 samples/               generated transcripts (both processes)
 ```

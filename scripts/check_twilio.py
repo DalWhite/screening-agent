@@ -21,11 +21,11 @@ sys.path.insert(0, str(ROOT))
 
 from dotenv import dotenv_values  # noqa: E402
 
-from backend.channels.twilio_provider import TwilioProvider  # noqa: E402
+from backend.integrations.twilio.client import TwilioClient  # noqa: E402
 from backend.config import settings  # noqa: E402
 
 KEYS = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_API_KEY_SID", "TWILIO_API_KEY_SECRET",
-        "TWILIO_WHATSAPP_FROM", "TWILIO_VALIDATE_SIGNATURES", "PUBLIC_BASE_URL"]
+        "TWILIO_WHATSAPP_FROM", "TWILIO_VALIDATE_SIGNATURES", "PUBLIC_BASE_URL", "TWILIO_API_BASE_URL"]
 SECRET = {"TWILIO_AUTH_TOKEN", "TWILIO_API_KEY_SECRET"}
 
 
@@ -53,6 +53,9 @@ def report_sources() -> None:
             note += "  <-- has leading/trailing whitespace"
         print(f"  {key:28s} {shown}{note}")
 
+    if os.getenv("TWILIO_API_BASE_URL", "").strip():
+        print("  ! TWILIO_API_BASE_URL is set: REST calls go to the local simulator, not to Twilio."
+              " Leave it empty outside development.")
     token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
     if token.startswith("SK"):
         print("  ! TWILIO_AUTH_TOKEN looks like an API Key SID (SK...). Put the key in TWILIO_API_KEY_SID /"
@@ -63,7 +66,7 @@ def report_sources() -> None:
         print("  i TWILIO_WHATSAPP_FROM has no 'whatsapp:' prefix; it is added automatically.")
 
 
-def check_account(provider: TwilioProvider) -> bool:
+def check_account(provider: TwilioClient) -> bool:
     print("\n== credentials check ==")
     if not provider.configured:
         print("  Twilio not configured (need TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN or API key).")
@@ -86,7 +89,7 @@ def check_account(provider: TwilioProvider) -> bool:
     return True
 
 
-def send_test(provider: TwilioProvider, to: str) -> None:
+def send_test(provider: TwilioClient, to: str) -> None:
     print(f"\n== sending free-form test WhatsApp message to {to} ==")
     sid = provider.send_whatsapp(to, "Prueba del agente de screening de Grupo Sazón ✅")
     if sid:
@@ -119,7 +122,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     report_sources()
-    provider = TwilioProvider()
+    provider = TwilioClient()
     ok = check_account(provider)
     if ok and args.send:
         send_test(provider, args.send)

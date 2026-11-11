@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -44,11 +45,13 @@ Notifier = Callable[[SessionState, str], bool]
 
 class BackofficeService:
     def __init__(self, agent: ScreeningAgent, store: SessionStore, notifier: Optional[Notifier] = None,
-                 verifications: Optional["VerificationService"] = None):
+                 verifications: Optional["VerificationService"] = None,
+                 channels: Optional[dict[str, dict[str, Any]]] = None):
         self.agent = agent
         self.store = store
         self.notifier = notifier
         self.verifications = verifications
+        self.channels = channels or {}  # active channels: provider, label, push capability (ChannelHub.describe)
 
     # ---------- reads ----------
 
@@ -60,7 +63,8 @@ class BackofficeService:
             "statuses": STATUS_LABELS,
             "check_statuses": CHECK_STATUS_LABELS,
             "providers": PROVIDER_LABELS,
-            "sources": SOURCE_LABELS,
+            "sources": {**SOURCE_LABELS, **{kind: info["label"] for kind, info in self.channels.items()}},
+            "channels": self.channels,
             "flags": all_flag_labels(),
             "tags": db.all_tags(),
             "assignees": db.all_assignees(),
@@ -370,7 +374,7 @@ class BackofficeService:
     def create_candidate(self, profile_id: str, by: str, name: Optional[str] = None, contact: Optional[str] = None,
                          language: Optional[str] = None, note: Optional[str] = None) -> dict[str, Any]:
         try:
-            state = self.agent.new_session(source="backoffice", language=language, contact=(contact or "").strip() or None,
+            state = self.agent.new_session(source="backoffice", language=language, contact=_clean_contact(contact),
                                            profile_id=profile_id)
         except KeyError as exc:
             raise Invalid(f"unknown profile {profile_id!r}") from exc
@@ -402,9 +406,8 @@ class BackofficeService:
             state.bot_paused = True
             paused_now = True
         state.history.append({"role": "assistant", "content": text})
-        delivered = self._push(state, text)
+        delivered = db.push_message(state.id, "recruiter", text, state.stage, lambda: self._push(state, text), author=by)
         db.save_session(state)
-        db.append_message(state.id, "recruiter", text, state.stage, delivered=delivered, author=by)
         events = [{"type": "recruiter_message", "payload": {"by": by, "pushed": delivered, "chars": len(text)}}]
         if paused_now:
             events.insert(0, {"type": "takeover_start", "payload": {"by": by}})
@@ -425,10 +428,9 @@ class BackofficeService:
                 state.bot_paused = False
             else:
                 message = self.agent.handback(state)
-            delivered = self._push(state, message) if message else False
-            db.save_session(state)
             if message:
-                db.append_message(state.id, "assistant", message, state.stage, delivered=delivered)
+                db.push_message(state.id, "assistant", message, state.stage, lambda: self._push(state, message))
+            db.save_session(state)
             db.append_events(state.id, [{"type": "takeover_end", "payload": {"by": by}}], state.stage)
         return {"id": session_id, "bot_paused": state.bot_paused, "message": message}
 
@@ -440,9 +442,8 @@ class BackofficeService:
         except ValueError as exc:
             raise Invalid(str(exc)) from exc
         state.bot_paused = False
-        delivered = self._push(state, message)
+        db.push_message(state.id, "assistant", message, state.stage, lambda: self._push(state, message))
         db.save_session(state)
-        db.append_message(state.id, "assistant", message, state.stage, delivered=delivered)
         db.append_events(state.id, [{"type": "recruiter_reopen",
                                      "payload": {"by": by, "from_status": previous, "question": state.stage}}],
                          state.stage)
@@ -456,12 +457,12 @@ class BackofficeService:
             raise NotFound(session_id)
         return state
 
-    def _push(self, state: SessionState, text: str) -> bool:
-        """Push channels (WhatsApp) deliver now; web chat picks it up via /pending."""
+    def _push(self, state: SessionState, text: str):
+        """Push channels deliver now (returns the channel that did); web chat picks it up via /pending."""
         if self.notifier is None:
             return False
         try:
-            return bool(self.notifier(state, text))
+            return self.notifier(state, text)
         except Exception:  # a failed push must not lose the message: it stays queued
             log.exception("push to candidate failed for session %s", state.id)
             return False
@@ -469,6 +470,21 @@ class BackofficeService:
     @staticmethod
     def _event(session_id: str, type_: str, payload: dict[str, Any], stage: Optional[str] = None) -> None:
         db.append_events(session_id, [{"type": type_, "payload": payload}], stage)
+
+
+_PHONE_RE = re.compile(r"[+\d\s().-]{6,30}")
+
+
+def _clean_contact(contact: Optional[str]) -> Optional[str]:
+    """Phone numbers are stored like channels address them (``+34600111222``), so a candidate
+    registered by a recruiter is recognised when they write on WhatsApp or call (the number
+    must include the country code, as WhatsApp and caller ID always do). Anything else (an
+    email...) is kept as typed."""
+    value = (contact or "").strip()
+    digits = re.sub(r"\D", "", value)
+    if _PHONE_RE.fullmatch(value) and len(digits) >= 6:
+        value = ("+" if "+" in value else "") + digits
+    return value or None
 
 
 def _safe_cell(value: Any) -> Any:

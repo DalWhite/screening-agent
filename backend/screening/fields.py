@@ -121,7 +121,7 @@ class NameHandler(FieldHandler):
     )
 
     def parse_text(self, q, text, ctx):
-        bare = self._PREFIX.sub("", (text or "").strip())
+        bare = self._PREFIX.sub("", (text or "").strip().rstrip(".!?,;:"))
         result = validate_name(bare)
         return {q.field: str(result.value)} if result.ok else {}
 
@@ -606,13 +606,45 @@ def mask_document(value: str) -> str:
     return "•" * max(0, len(value) - 4) + value[-4:]
 
 
+# Spanish letter names, as a caller spells a control letter (after the digits) or a NIE prefix
+# (before them). Only translated next to the digits: "de", "a", "te"... are ordinary words too.
+_LETTER_NAMES = {
+    "uve doble": "W", "doble uve": "W", "i griega": "Y", "erre": "R", "hache": "H", "jota": "J", "equis": "X",
+    "zeta": "Z", "efe": "F", "ele": "L", "eme": "M", "ene": "N", "ese": "S", "uve": "V", "be": "B", "ce": "C",
+    "de": "D", "ge": "G", "ka": "K", "pe": "P", "cu": "Q", "te": "T", "ye": "Y", "a": "A", "e": "E",
+}
+_LETTER_WORDS = "|".join(sorted((re.escape(k) for k in _LETTER_NAMES), key=len, reverse=True))
+_CONTROL_NAME = re.compile(rf"(\d)[\s.,-]+({_LETTER_WORDS})\b", re.IGNORECASE)
+_PREFIX_NAME = re.compile(r"\b(equis|i griega|ye|zeta)[\s.,-]+(?=\d)", re.IGNORECASE)
+# digit by digit / in pairs, as speech recognition writes a spoken number: "1 2 3 4 5 6 7 8 z"
+_SPOKEN = (
+    ("nie", re.compile(r"(?<![A-Z0-9])([XYZ])[\s.,-]*((?:\d[\s.,-]*){7})([A-Z])(?![A-Z0-9])")),
+    ("dni", re.compile(r"(?<![A-Z0-9])((?:\d[\s.,-]*){8})([A-Z])(?![A-Z0-9])")),
+)
+
+
+def _spoken_letters(text: str) -> str:
+    text = _CONTROL_NAME.sub(lambda m: f"{m.group(1)} {_LETTER_NAMES[m.group(2).lower()]}", text)
+    return _PREFIX_NAME.sub(lambda m: f"{_LETTER_NAMES[m.group(1).lower()]} ", text)
+
+
 def find_document(text: str) -> Optional[str]:
-    """First identity document in free text, normalised ("12.345.678-z" -> "12345678Z")."""
+    """First identity document in free text, normalised ("12.345.678-z" -> "12345678Z").
+
+    Also understands how a number is *said* on the phone and transcribed by speech
+    recognition: digit by digit or in pairs ("1 2 3 4 5 6 7 8 z", "12 34 56 78 Z")
+    and letters by name ("… 7 8 zeta", "equis 1 2 … ele").
+    """
     upper = (text or "").upper()
     for _, pattern in _DOC_PATTERNS:
         m = pattern.search(upper)
         if m:
             return re.sub(r"[\s.-]", "", "".join(m.groups()))
+    spoken = _spoken_letters(text or "").upper()
+    for _, pattern in _SPOKEN:
+        m = pattern.search(spoken)
+        if m:
+            return re.sub(r"[\s.,-]", "", "".join(m.groups()))
     return None
 
 

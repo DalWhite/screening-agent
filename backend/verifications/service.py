@@ -175,6 +175,7 @@ class VerificationService:
         self._update(verification_id, status=status, result_detail=(detail or "")[:300] or None,
                      completed_at=_iso(now), decided_by=by, reference=reference or row["reference"],
                      payload_json=row["payload_json"] if keep_payload else None)
+        reply, state = None, None
         with self.store.lock(row["session_id"]):
             state = self.store.get(row["session_id"])
             if state is not None:
@@ -183,10 +184,11 @@ class VerificationService:
                     if event["type"] == "check_result" and by:
                         event["payload"]["by"] = by
                 db.save_session(state)
-                if reply:
-                    delivered = self._push(state, reply)
-                    db.append_message(state.id, "assistant", reply, state.stage, delivered=delivered)
                 db.append_events(state.id, decision.events, state.stage)
+        if state is not None and reply:
+            # outside the session lock: the push may wait for a turn of this candidate that is still
+            # being answered (the decision must not overtake the reply to their last message)
+            db.push_message(state.id, "assistant", reply, state.stage, lambda: self._push(state, reply))
         log.info("verification %s (%s) -> %s", verification_id, row["check_id"], status)
         return self.get(verification_id)
 
@@ -237,11 +239,12 @@ class VerificationService:
 
     # ---------- helpers ----------
 
-    def _push(self, state: SessionState, text: str) -> bool:
+    def _push(self, state: SessionState, text: str):
+        """The channel that delivered it (a name) or a falsy value (queued for the candidate's return)."""
         if self.notifier is None:
             return False
         try:
-            return bool(self.notifier(state, text))
+            return self.notifier(state, text)
         except Exception:
             log.exception("push after verification failed for session %s", state.id)
             return False

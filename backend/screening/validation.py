@@ -25,8 +25,20 @@ class FieldResult:
     error: str | None = None
 
 
+_NAME_PARTICLES = {"de", "del", "la", "las", "los", "y", "da", "do", "dos", "van", "von", "der", "di", "du", "le"}
+
+
+def _tidy_name(raw: str) -> str:
+    """Speech recognition and hurried typing: "carlos martín ruiz." -> "Carlos Martín Ruiz"."""
+    raw = re.sub(r"\s+", " ", raw).strip().rstrip(".!?,;:").strip()
+    if raw and (raw.islower() or raw.isupper()):
+        words = raw.lower().split(" ")
+        raw = " ".join(w if i and w in _NAME_PARTICLES else w[:1].upper() + w[1:] for i, w in enumerate(words))
+    return raw
+
+
 def validate_name(text: str) -> FieldResult:
-    raw = (text or "").strip()
+    raw = _tidy_name(text or "")
     norm = normalize(raw)
     if not norm:
         return FieldResult(False, error="empty")
@@ -43,8 +55,23 @@ _NO_RE = re.compile(r"\b(no|none|negativo|ninguna|ninguno|nunca|do not|dont|don'
 _YES_RE = re.compile(r"\b(si|yes|yep|yeah|yup|sip|claro|correcto|afirmativo|por supuesto|tengo|cuento|dispongo|of course)\b")
 
 
+# Talk about the conversation itself, not an answer: "perdona, no te he oído", "no sé si me oyes",
+# "no podía hablar", "can't hear you". Its "no" must never answer a yes/no question (a knockout
+# like "¿Eres mayor de 18 años?" would reject the candidate); "ya estoy" is not a "yes" either.
+_NOT_AN_ANSWER = re.compile(
+    r"\b(?:"
+    r"(?:no se )?si (?:me |se )?(?:oyes|escuchas|oye|escucha)(?: bien)?"  # "si" = if, not "sí"
+    r"|no (?:te |le |os |lo |la |me )?(?:oigo|oia|oi|he oido|has oido|escucho|escuchaba|entiendo|entendi|"
+    r"he entendido|se(?: nada)?|sabia|pude|podia(?: hablar)?|puedo hablar(?: ahora)?|llega|llego)"
+    r"|(?:me )?(?:oyes|escuchas)|se (?:me )?(?:corta|corto|oye mal|escucha mal)|ya estoy(?: aqui)?|estoy aqui"
+    r"|can t hear|cannot hear|couldn t hear|didn t (?:hear|catch|get)|don t (?:understand|know)|not sure"
+    r"|i m (?:here|back)|are you there|you there"
+    r")\b"
+)
+
+
 def map_yes_no(text: str) -> Optional[bool]:
-    norm = normalize(text)
+    norm = _NOT_AN_ANSWER.sub(" ", normalize(text)).strip()
     if not norm:
         return None
     no_m = _NO_RE.search(norm)

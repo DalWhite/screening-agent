@@ -1,0 +1,191 @@
+import pytest
+from datetime import date
+
+from backend.screening.profile import get_profile
+from backend.screening.validation import (
+    map_yes_no,
+    parse_date_text,
+    parse_experience_fallback,
+    parse_tags,
+    parse_years,
+    validate_name,
+    validate_start_date,
+    validate_years,
+)
+
+TODAY = date(2026, 10, 11)
+
+# Availability / schedule keyword maps now live in the delivery profile as choice options.
+_COURIER = get_profile("delivery_courier")
+_AVAILABILITY = _COURIER.question("availability")
+_SCHEDULE = _COURIER.question("schedule")
+_PLATFORMS = _COURIER.question("experience").tags
+
+
+def map_availability(text):
+    return _AVAILABILITY.handler.match(_AVAILABILITY, text)
+
+
+def map_schedule(text):
+    hits = _SCHEDULE.handler.match(_SCHEDULE, text)
+    return hits[0] if hits else None
+
+
+def parse_platforms(text):
+    return parse_tags(text, _PLATFORMS)
+
+
+def test_name_valid():
+    assert validate_name("Laura Jiménez Ortiz").ok
+
+
+def test_name_rejects_placeholders():
+    assert not validate_name("asdf").ok
+    assert not validate_name("no se").ok
+
+
+def test_name_rejects_too_short():
+    assert not validate_name("L").ok
+
+
+def test_availability_full_time_variants():
+    for text in ["jornada completa", "tengo disponibilidad completa", "full time", "todo el día"]:
+        assert "full_time" in map_availability(text), text
+
+
+def test_availability_part_time():
+    assert map_availability("medio tiempo") == ["part_time"]
+
+
+def test_availability_weekends():
+    assert map_availability("solo fines de semana") == ["weekends"]
+
+
+def test_availability_unknown():
+    assert map_availability("depende") == []
+
+
+def test_schedule_variants():
+    assert map_schedule("por la mañana") == "morning"
+    assert map_schedule("tarde") == "afternoon"
+    assert map_schedule("noche") == "evening"
+    assert map_schedule("me da igual") == "flexible"
+
+
+def test_schedule_unknown():
+    assert map_schedule("cuando quiera") is None
+
+
+def test_parse_years():
+    assert parse_years("2 años") == 2
+    assert parse_years("no experience") == 0
+    assert parse_years("three years") == 3
+    assert parse_years("sí en globo un año y en uber eats 2 años") == 2
+    assert parse_years("un año en glovo") == 1
+
+
+def test_parse_platforms():
+    assert parse_platforms("sí en globo un año y en uber eats 2 años") == ["glovo", "uber eats"]
+    assert parse_platforms("trabajé en Deliveroo y Wolt") == ["deliveroo", "wolt"]
+    assert parse_platforms("no he trabajado nunca") == []
+
+
+def test_experience_fallback():
+    years, platforms = parse_experience_fallback("sí en globo un año y en uber eats 2 años", _PLATFORMS)
+    assert years == 2 and platforms == ["glovo", "uber eats"]
+    assert parse_experience_fallback("no tengo experiencia")[0] == 0
+    assert parse_experience_fallback("sí")[0] == 0
+    assert parse_experience_fallback("repartí en riders")[0] == 0
+    assert parse_experience_fallback("quizás tal vez") == (None, [])
+
+
+def test_parse_date_iso():
+    assert parse_date_text("2026-11-02", TODAY) == date(2026, 11, 2)
+
+
+def test_parse_date_slash():
+    assert parse_date_text("15/11/2026", TODAY) == date(2026, 11, 15)
+
+
+def test_parse_date_spanish_relative():
+    # regression: "en 2 semanas" used to fall through to fuzzy parsing and became the 2nd of the month
+    assert parse_date_text("puedo empezar en 2 semanas", TODAY) == date(2026, 10, 25)
+    assert parse_date_text("dentro de 3 días", TODAY) == date(2026, 10, 14)
+    assert parse_date_text("en un mes", TODAY) == date(2026, 11, 10)
+    assert parse_date_text("in 2 weeks", TODAY) == date(2026, 10, 25)
+    assert parse_date_text("cuanto antes", TODAY) == date(2026, 10, 12)
+
+
+def test_parse_date_next_week():
+    assert parse_date_text("la próxima semana", TODAY) == date(2026, 10, 18)
+
+
+def test_parse_date_weekday():
+    assert parse_date_text("el lunes que viene", TODAY) == date(2026, 10, 12)
+
+
+def test_start_date_rejects_past():
+    assert not validate_start_date(date(2026, 1, 1), TODAY).ok
+
+
+def test_start_date_rejects_far_future():
+    assert not validate_start_date(date(2027, 6, 1), TODAY).ok
+
+
+def test_start_date_accepts_near():
+    assert validate_start_date(date(2026, 11, 2), TODAY).ok
+
+
+def test_validate_years():
+    assert validate_years(2).ok
+    assert not validate_years(-1).ok
+
+
+def test_yes_no_affirmative_variants():
+    for text in ["sí tengo licencia de coche de moto pues", "sí", "yes", "claro que sí", "tengo carnet"]:
+        assert map_yes_no(text) is True, text
+
+
+def test_yes_no_negative_variants():
+    for text in ["no tengo", "no", "none", "no cuento con ella"]:
+        assert map_yes_no(text) is False, text
+
+
+def test_yes_no_first_match_wins():
+    assert map_yes_no("sí no sé") is True
+
+
+def test_yes_no_ambiguous_returns_none():
+    assert map_yes_no("depende") is None
+    assert map_yes_no("quizá más adelante") is None
+    assert map_yes_no("asdf") is None
+
+
+@pytest.mark.parametrize("text, expected", [
+    # talk about the conversation is never an answer (a "no" here would be a legal knockout)
+    ("perdona, no te he oído bien", None),
+    ("hola, perdona, no podía hablar", None),
+    ("no sé si me oyes", None),
+    ("ya estoy aquí", None),
+    ("sorry, I can't hear you", None),
+    ("no sé nada de eso", None),
+    # real answers still work
+    ("no", False), ("no, no puedo", False), ("no tengo carnet", False), ("sí", True),
+    ("sí, ya estoy", True), ("si me oyes: sí, claro", True), ("nope, no", False),
+])
+def test_yes_no_ignores_talk_about_the_conversation(text, expected):
+    from backend.screening.validation import map_yes_no
+
+    assert map_yes_no(text) is expected
+
+
+@pytest.mark.parametrize("spoken, stored", [
+    ("carlos martín ruiz.", "Carlos Martín Ruiz"),  # speech recognition: lowercase + final period
+    ("Carlos Martín Ruiz.", "Carlos Martín Ruiz"),  # Twilio: a sentence
+    ("MARÍA DE LA O PÉREZ", "María de la O Pérez"),
+    ("Ana López-Díaz", "Ana López-Díaz"),  # typed with care: untouched
+])
+def test_names_from_speech_are_tidied(spoken, stored):
+    from backend.screening.validation import validate_name
+
+    assert validate_name(spoken).value == stored

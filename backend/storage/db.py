@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Callable, Any, Optional
 
 from ..config import settings
 import re
@@ -64,7 +64,25 @@ CREATE TABLE IF NOT EXISTS messages (
     ts TEXT NOT NULL,
     stage TEXT,
     delivered INTEGER NOT NULL DEFAULT 1,
-    author TEXT
+    author TEXT,
+    channel TEXT,
+    kind TEXT NOT NULL DEFAULT 'text',
+    meta_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS channel_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    external_id TEXT,
+    contact TEXT,
+    kind TEXT NOT NULL,
+    body TEXT,
+    status TEXT NOT NULL,
+    error_code INTEGER,
+    error_detail TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,11 +146,21 @@ CREATE TABLE IF NOT EXISTS verifications (
 CREATE INDEX IF NOT EXISTS idx_verifications_session ON verifications(session_id);
 CREATE INDEX IF NOT EXISTS idx_verifications_status ON verifications(status);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+CREATE TABLE IF NOT EXISTS channel_inbound (
+    provider TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    PRIMARY KEY (provider, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_deliveries_external ON channel_deliveries(provider, external_id);
+CREATE INDEX IF NOT EXISTS idx_deliveries_session ON channel_deliveries(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_notes_session ON recruiter_notes(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_ts ON sessions(last_ts);
 CREATE INDEX IF NOT EXISTS idx_sessions_contact ON sessions(source, contact);
+CREATE INDEX IF NOT EXISTS idx_sessions_contact_profile ON sessions(contact, profile_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_pipeline ON sessions(pipeline_stage);
 CREATE INDEX IF NOT EXISTS idx_sessions_profile ON sessions(profile_id);
 """
@@ -155,6 +183,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("sessions", "bot_paused", "INTEGER NOT NULL DEFAULT 0"),
     ("messages", "author", "TEXT"),
     ("sessions", "profile_revision", "INTEGER"),
+    # conversation registry: which channel each message went through, what it was, details
+    ("messages", "channel", "TEXT"),
+    ("messages", "kind", "TEXT NOT NULL DEFAULT 'text'"),
+    ("messages", "meta_json", "TEXT NOT NULL DEFAULT '{}'"),
 ]
 
 
@@ -253,6 +285,13 @@ def _row_to_session(row: sqlite3.Row) -> dict[str, Any]:
     out["attempts"] = state.get("attempts") or {}
     out["abuse_count"] = state.get("abuse_count") or 0
     out["completed_stages"] = state.get("completed_stages") or []
+    if "source" in out:  # sessions saved before channel continuity only know where they started
+        out["channels"] = state.get("channels") or [out["source"]]
+        out["channel"] = state.get("channel") or out["channels"][-1]
+        channel_state = dict(state.get("channel_state") or {})
+        if state.get("wa_inbound_at") and "whatsapp" not in channel_state:  # saved before channel_state existed
+            channel_state["whatsapp"] = {"inbound_at": state["wa_inbound_at"]}
+        out["channel_state"] = channel_state
     out["profile_id"] = out.get("profile_id") or "delivery_courier"
     return out
 
@@ -314,6 +353,9 @@ def save_session(state: Any) -> None:
         "attempts": dict(getattr(state, "attempts", {}) or {}),
         "abuse_count": getattr(state, "abuse_count", 0),
         "completed_stages": list(getattr(state, "completed_stages", []) or []),
+        "channel": getattr(state, "channel", None),
+        "channels": list(getattr(state, "channels", []) or []),
+        "channel_state": dict(getattr(state, "channel_state", {}) or {}),
     }
     disqualify_reason = summary.get("disqualify_reason") or getattr(state, "disqualify_reason", None)
     with get_conn() as conn:
@@ -372,30 +414,194 @@ def save_session(state: Any) -> None:
         _refresh_search_text(conn, state.id)
 
 
+# Message kinds in the conversation registry. Candidate side: what they sent; assistant side:
+# what kind of prompt it was. Everything a candidate reads or hears is stored, on every channel.
+MESSAGE_KINDS = (
+    "text",        # typed message (web, WhatsApp) or a regular assistant reply
+    "speech",      # what a caller said, as transcribed by the phone provider's STT
+    "voice_note",  # WhatsApp voice note, stored as its transcript (the audio is never kept)
+    "media",       # WhatsApp photo / video / document / sticker: a placeholder, never the file
+    "reprompt",    # assistant re-asked after silence on a call
+    "notice",      # assistant system notice (recruiter is reviewing, media not supported...)
+    "nudge",       # re-engagement message to a silent candidate
+)
+
+
 def append_message(session_id: str, role: str, content: str, stage: Optional[str],
-                   delivered: bool = True, author: Optional[str] = None) -> int:
+                   delivered: bool = True, author: Optional[str] = None, channel: Optional[str] = None,
+                   kind: str = "text", meta: Optional[dict[str, Any]] = None) -> int:
+    """Store one conversation line. ``channel`` is where it was said or delivered (None = not
+    delivered yet); ``meta`` keeps channel details (STT confidence, call SID, provider ids...)."""
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO messages (session_id, role, content, ts, stage, delivered, author) VALUES (?,?,?,?,?,?,?)",
-            (session_id, role, content, _now(), stage, 1 if delivered else 0, author),
+            "INSERT INTO messages (session_id, role, content, ts, stage, delivered, author, channel, kind, meta_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (session_id, role, content, _now(), stage, 1 if delivered else 0, author,
+             channel if delivered or role == "user" else None, kind,
+             json.dumps(meta or {}, ensure_ascii=False, default=str)),
         )
         return int(cur.lastrowid or 0)
 
 
-def pending_messages(session_id: str) -> list[dict[str, Any]]:
-    """Return undelivered outbound messages (nudges, recruiter messages) and mark them delivered."""
+IN_FLIGHT = 2  # messages.delivered while a push is on its way (not picked up by pending_messages)
+SUPERSEDED = 3  # never sent and no longer relevant (a nudge for a candidate who already came back)
+
+
+def push_message(session_id: str, role: str, content: str, stage: Optional[str], push: Callable[[], Any],
+                 author: Optional[str] = None, kind: str = "text") -> bool:
+    """Outbox: store an outbound message *before* pushing it, then settle it.
+
+    Providers can report a failure (status callback) before the push call has
+    even returned; storing first means that report always finds the row. The
+    row is settled as delivered only if nothing re-queued it in the meantime.
+    ``push`` returns the name of the channel that delivered it (recorded with the
+    message) or a falsy value.
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO messages (session_id, role, content, ts, stage, delivered, author, channel, kind, meta_json) "
+            "VALUES (?,?,?,?,?,?,?,NULL,?,'{}')",
+            (session_id, role, content, _now(), stage, IN_FLIGHT, author, kind),
+        )
+        message_id = int(cur.lastrowid or 0)
+    try:
+        result = push()  # the channel that delivered it ("whatsapp"...), or a falsy value
+    except Exception:  # a failed push must not lose the message: it stays queued
+        log.exception("push failed for session %s", session_id)
+        result = None
+    delivered = bool(result)
+    channel = result if isinstance(result, str) else None
+    with get_conn() as conn:
+        if delivered:
+            conn.execute("UPDATE messages SET delivered=1, channel=? WHERE id=? AND delivered=?",
+                         (channel, message_id, IN_FLIGHT))
+        else:
+            conn.execute("UPDATE messages SET delivered=0 WHERE id=? AND delivered=?", (message_id, IN_FLIGHT))
+    return delivered
+
+
+def pending_messages(session_id: str, channel: Optional[str] = None,
+                     supersede: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    """Return undelivered outbound messages (nudges, recruiter messages) and mark them delivered
+    (through ``channel``, when the caller knows it: "whatsapp", "web"...). Kinds in ``supersede``
+    are not returned but marked superseded: e.g. "are you still there?" for a candidate who is."""
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, role, content, ts, stage, author FROM messages "
+            "SELECT id, role, content, ts, stage, author, kind FROM messages "
             "WHERE session_id=? AND delivered=0 AND role!='user' ORDER BY id",
             (session_id,),
         ).fetchall()
+        stale = [r["id"] for r in rows if r["kind"] in supersede]
+        if stale:
+            conn.execute(f"UPDATE messages SET delivered=? WHERE id IN ({','.join('?' * len(stale))})",
+                         [SUPERSEDED, *stale])
+        rows = [r for r in rows if r["kind"] not in supersede]
         if rows:
             conn.execute(
-                f"UPDATE messages SET delivered=1 WHERE id IN ({','.join('?' * len(rows))})",
-                [r["id"] for r in rows],
+                f"UPDATE messages SET delivered=1, channel=COALESCE(?, channel) WHERE id IN ({','.join('?' * len(rows))})",
+                [channel, *[r["id"] for r in rows]],
             )
     return [dict(r) for r in rows]
+
+
+def requeue_message(session_id: str, content: str) -> Optional[int]:
+    """A push the provider accepted and later failed: mark the latest outbound copy undelivered
+    again, so it goes out with the candidate's next message."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM messages WHERE session_id=? AND role!='user' AND content=? ORDER BY id DESC LIMIT 1",
+            (session_id, content),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("UPDATE messages SET delivered=0, channel=NULL WHERE id=?", (row["id"],))
+        return int(row["id"])
+
+
+# ---------- provider delivery registry (outbound WhatsApp messages) ----------
+
+# ---------- inbound de-duplication (provider webhook retries, across restarts) ----------
+
+INBOUND_STALE_SECONDS = 60  # a claim still "processing" after this long died with its process
+
+
+def claim_inbound(provider: str, message_id: str) -> bool:
+    """True if this provider message must be processed now; False for a retry of one already
+    processed (or being processed). A claim left "processing" by a crashed process is taken over,
+    so a redelivery after a crash mid-turn is not lost."""
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute("SELECT state, received_at FROM channel_inbound WHERE provider=? AND message_id=?",
+                           (provider, message_id)).fetchone()
+        if row is not None:
+            stale = now - datetime.fromisoformat(row["received_at"]) > timedelta(seconds=INBOUND_STALE_SECONDS)
+            if row["state"] == "done" or not stale:
+                return False
+        conn.execute("INSERT OR REPLACE INTO channel_inbound (provider, message_id, state, received_at) VALUES (?,?,?,?)",
+                     (provider, message_id, "processing", now.isoformat()))
+        if now.minute == 0 and now.second < 2:  # cheap housekeeping: providers retry for days, not weeks
+            conn.execute("DELETE FROM channel_inbound WHERE received_at < ?", ((now - timedelta(days=8)).isoformat(),))
+    return True
+
+
+def finish_inbound(provider: str, message_id: str, processed: bool = True) -> None:
+    with get_conn() as conn:
+        if processed:
+            conn.execute("UPDATE channel_inbound SET state='done' WHERE provider=? AND message_id=?", (provider, message_id))
+        else:  # failed: let the provider's retry through
+            conn.execute("DELETE FROM channel_inbound WHERE provider=? AND message_id=?", (provider, message_id))
+
+
+def session_for_event(event_type: str, key: str, value: str) -> Optional[str]:
+    """Session of the latest event whose payload has ``key == value`` (e.g. the call of a CallSid)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT session_id FROM events WHERE type=? AND json_extract(payload_json, ?) = ? ORDER BY id DESC LIMIT 1",
+            (event_type, f"$.{key}", value)).fetchone()
+        return row["session_id"] if row else None
+
+
+# kind: reply (answer to the candidate) | message (recruiter / check decision) | nudge | template
+def record_delivery(session_id: Optional[str], channel: str, provider: str, external_id: Optional[str],
+                    contact: Optional[str], kind: str, body: Optional[str], status: str,
+                    error_code: Optional[int] = None, error_detail: Optional[str] = None) -> int:
+    now = _now()
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO channel_deliveries (session_id, channel, provider, external_id, contact, kind, body, status, "
+            "error_code, error_detail, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (session_id, channel, provider, external_id, contact, kind, body, status, error_code, error_detail, now, now),
+        )
+        return int(cur.lastrowid or 0)
+
+
+_DELIVERY_RANK = {"accepted": 0, "queued": 0, "sent": 1, "delivered": 2, "read": 3, "failed": 4, "undelivered": 4}
+
+
+def update_delivery(provider: str, external_id: str, status: str, error_code: Optional[int] = None,
+                    error_detail: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Apply a provider status callback. Statuses only move forward (a late "sent" never
+    overwrites "read" or "failed"), atomically: receipts can be processed concurrently.
+    Returns the delivery row as it was before, plus ``applied`` (this call changed it),
+    or None if the message id is unknown."""
+    rank = " ".join(f"WHEN '{name}' THEN {value}" for name, value in _DELIVERY_RANK.items())
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM channel_deliveries WHERE provider=? AND external_id=? ORDER BY id DESC LIMIT 1",
+                           (provider, external_id)).fetchone()
+        if row is None:
+            return None
+        cur = conn.execute(
+            "UPDATE channel_deliveries SET status=?, error_code=COALESCE(?, error_code), "
+            "error_detail=COALESCE(?, error_detail), updated_at=? "
+            f"WHERE id=? AND status != ? AND (CASE status {rank} ELSE 0 END) <= ?",
+            (status, error_code, error_detail, _now(), row["id"], status, _DELIVERY_RANK.get(status, 0)))
+        return {**dict(row), "applied": cur.rowcount == 1}
+
+
+def deliveries(session_id: str) -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM channel_deliveries WHERE session_id=? ORDER BY id", (session_id,))]
 
 
 def append_events(session_id: str, events: list[dict[str, Any]], stage: Optional[str]) -> None:
@@ -415,10 +621,13 @@ def get_session(session_id: str) -> Optional[dict[str, Any]]:
         if row is None:
             return None
         session = _row_to_session(row)
-        session["messages"] = [dict(r) for r in conn.execute(
-            "SELECT id, role, content, ts, stage, delivered, author FROM messages WHERE session_id=? ORDER BY id",
-            (session_id,),
-        )]
+        session["messages"] = [
+            {**{k: r[k] for k in ("id", "role", "content", "ts", "stage", "delivered", "author", "channel", "kind")},
+             "meta": json.loads(r["meta_json"] or "{}")}
+            for r in conn.execute(
+                "SELECT id, role, content, ts, stage, delivered, author, channel, kind, meta_json FROM messages "
+                "WHERE session_id=? ORDER BY id", (session_id,))
+        ]
         session["events"] = [
             {**{k: r[k] for k in ("type", "ts", "stage")}, "payload": json.loads(r["payload_json"])}
             for r in conn.execute("SELECT type, payload_json, ts, stage FROM events WHERE session_id=? ORDER BY id", (session_id,))
@@ -443,6 +652,25 @@ def find_session_by_contact(source: str, contact: str) -> Optional[dict[str, Any
             (source, contact),
         ).fetchone()
         return _row_to_session(row) if row is not None else None
+
+
+LIVE_STATUSES = ("active", "verifying", "abandoned")
+
+
+def find_live_sessions_by_contact(contact: str, profile_id: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Not-yet-decided sessions of one phone number in one process, on any channel, newest first.
+
+    Channel continuity: a candidate who started on WhatsApp can carry on by phone
+    (and vice versa), or continue a screening a recruiter registered for them.
+    Callers still apply the lifecycle rules (resume window, final stages).
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM sessions WHERE contact=? AND profile_id=? AND status IN ({','.join('?' * len(LIVE_STATUSES))}) "
+            "ORDER BY last_ts DESC, started_at DESC LIMIT ?",
+            (contact, profile_id, *LIVE_STATUSES, limit),
+        ).fetchall()
+        return [_row_to_session(r) for r in rows]
 
 
 def active_sessions_idle(seconds: int) -> list[dict[str, Any]]:

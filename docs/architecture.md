@@ -8,7 +8,12 @@ graph LR
         CHAT[index.html + chat.js<br/>job picker · text + mic + TTS · recruiter messages]
         BO[backoffice.html + static/bo<br/>pipeline · candidates · results · analytics]
     end
-    CHAT -- REST --> API[FastAPI app.py]
+    CHAT -- REST /api/sessions --> WEB[api/sessions.py<br/>WebChannel]
+    WEB --> AG
+    WEB --- API[FastAPI app.py]
+    PHONE[WhatsApp · phone calls] -- webhooks --> PROV[integrations<br/>Twilio · Meta · Vonage adapters]
+    PROV -- neutral events --> CH[channels<br/>MessagingChannel · VoiceChannel · hub]
+    CH --> AG
     BO -- /api/bo --> BOA[backoffice/<br/>router · service · report]
     BOA --> API
     API --> AG[ScreeningAgent<br/>generic stage machine]
@@ -27,6 +32,17 @@ graph LR
     MON[reengagement.py<br/>nudges · auto-abandon · skips takeovers] --> DB
     API --> AN[analytics/metrics.py<br/>funnel per profile · pipeline]
 ```
+
+## Channels
+
+Web chat, WhatsApp and phone candidates reach the same agent through
+provider-neutral channels in `backend/channels/` (`WebChannel`, `MessagingChannel`,
+`VoiceChannel`). The web channel has no provider; its HTTP transport is
+`api/sessions.py`. Vendor wire formats live in provider adapters
+(`integrations/<vendor>/`) selected by `WHATSAPP_PROVIDER` /
+`VOICE_PROVIDER` and mounted by `ChannelHub`. See
+`docs/channel_architecture.md` (design, adding a provider) and
+`docs/channels.md` (behaviour).
 
 ## Generic engine + screening profiles
 

@@ -389,6 +389,11 @@ code { font-size: 12px; background: var(--surface-3); padding: 1px 5px; border-r
 .msg.recruiter .msg-body { background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
 .msg.bot .msg-meta, .msg.recruiter .msg-meta { text-align: right; }
 .msg.sys { align-self: center; max-width: 90%; }
+.msg-kind { color: var(--faint); }
+.msg.kind-notice .msg-body, .msg.kind-reprompt .msg-body { font-style: italic; opacity: .85; }
+.msg.kind-media .msg-body { color: var(--faint); font-style: italic; }
+.channel-divider { align-self: center; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); display: flex; align-items: center; gap: 8px; width: 100%; }
+.channel-divider::before, .channel-divider::after { content: ""; flex: 1; border-top: 1px dashed var(--border); }
 .msg.sys .msg-body { background: var(--s-amber); color: var(--t-amber); font-size: 12.5px; border-radius: 8px; }
 .composer-bo { border-top: 1px solid var(--border); padding: 12px; display: flex; flex-direction: column; gap: 10px; background: var(--surface); }
 .composer-bo textarea { width: 100%; border: 0; box-shadow: none; padding: 4px 2px; resize: none; }

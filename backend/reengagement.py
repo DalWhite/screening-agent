@@ -12,7 +12,7 @@ from .storage import db
 
 log = logging.getLogger("sazon.reengage")
 
-TICK_SECONDS = 15
+TICK_SECONDS = 15  # default of REENGAGE_TICK_SECONDS
 
 
 class ReengagementMonitor:
@@ -45,7 +45,7 @@ class ReengagementMonitor:
 
     async def _loop(self) -> None:
         while True:
-            await asyncio.sleep(TICK_SECONDS)
+            await asyncio.sleep(settings.reengage_tick_seconds or TICK_SECONDS)
             try:
                 self.tick()
             except Exception:
@@ -73,13 +73,10 @@ class ReengagementMonitor:
         text = self.agent.reengage_text(state, attempt)
         state.reengage_attempts = attempt
         state.history.append({"role": "assistant", "content": text})
-        pushed = False
-        if self.notifier is not None:
-            try:
-                pushed = bool(self.notifier(state, text))
-            except Exception:
-                log.exception("nudge push failed for session %s", state.id)
-        db.append_message(state.id, "assistant", text, state.stage, delivered=pushed)
+        notifier = self.notifier
+        pushed = db.push_message(state.id, "assistant", text, state.stage,
+                                 (lambda: notifier(state, text)) if notifier is not None else (lambda: False),
+                                 kind="nudge")
         db.set_reengage_attempts(state.id, attempt)
         db.append_events(state.id, [{"type": "reengage_nudge", "payload": {"attempt": attempt, "pushed": pushed, "idle_seconds": int((datetime.now(timezone.utc) - state.last_candidate_ts).total_seconds())}}], state.stage)
         log.info("re-engagement nudge %d for session %s (pushed=%s)", attempt, state.id, pushed)

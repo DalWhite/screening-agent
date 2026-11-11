@@ -48,6 +48,8 @@ def state_from_row(row: dict) -> Optional[SessionState]:
         completed_stages=list(row.get("completed_stages") or (row.get("summary") or {}).get("completed_stages") or []),
         attempts=dict(row.get("attempts") or {}),
         abuse_count=int(row.get("abuse_count") or 0),
+        channel=row.get("channel") or row["source"],
+        channels=list(row.get("channels") or [row["source"]]),
     )
     full = db.get_session(row["id"]) or {}
     # recruiter messages are part of the conversation the model must see (as the assistant side)
@@ -59,6 +61,7 @@ def state_from_row(row: dict) -> Optional[SessionState]:
         state.last_candidate_ts = parse_ts(row["last_ts"])
     except ValueError:
         pass
+    state.channel_state = dict(row.get("channel_state") or {})
     return state
 
 
@@ -97,6 +100,16 @@ class SessionStore:
         if state is not None:
             self.registry[state.id] = state
         return state
+
+    def find_live_by_contact(self, contact: str, profile_id: str) -> list[SessionState]:
+        """Undecided sessions of this phone number in this process, on any channel, newest first."""
+        states: list[SessionState] = []
+        for row in db.find_live_sessions_by_contact(contact, profile_id):
+            state = self.registry.get(row["id"]) or state_from_row(row)
+            if state is not None:
+                self.registry.setdefault(state.id, state)
+                states.append(self.registry[state.id])
+        return states
 
     def put(self, state: SessionState) -> None:
         self.registry[state.id] = state

@@ -1,6 +1,6 @@
 # Load testing: does this architecture support 100 concurrent candidates and 10 recruiters?
 
-`e2e/stress/` answers that question with a real, running server instead of a guess: ~100
+`tests/stress/` answers that question with a real, running server instead of a guess: ~100
 candidates chat at once (organic, varied scripts — knockouts, reviews, FAQ, bilingual, drop-offs)
 while ~10 recruiters work the backoffice at the same time (board, search, quick view, stage moves,
 notes, analytics, CSV export, manual candidates), all through the same HTTP API and the same
@@ -8,20 +8,20 @@ browser UI the functional e2e suite uses. Nothing is mocked except the LLM (as e
 the test suite) — same single uvicorn process, same SQLite database (WAL mode), same background
 workers (re-engagement monitor, verification worker) as a real deployment.
 
-It is **opt-in** and excluded from both `python -m pytest` and `python -m pytest e2e` (it's slower
+It is **opt-in** and excluded from both `python -m pytest` and `python -m pytest -m e2e` (it's slower
 and heavier than a functional test, and its purpose is measurement, not day-to-day regression
 checking):
 
 ```bash
 pip install -r requirements-dev.txt            # adds psutil (CPU/RSS sampling)
-python -m pytest e2e/stress -m stress -s        # baseline (20 candidates / 3 recruiters), then the
+python -m pytest -m stress -s                  # baseline (20 candidates / 3 recruiters), then the
                                                  # target load (100 / 10); ~2 minutes, prints a report
-STRESS_CANDIDATES=300 STRESS_RECRUITERS=25 python -m pytest e2e/stress -m stress -s   # go further
+STRESS_CANDIDATES=300 STRESS_RECRUITERS=25 python -m pytest -m stress -s   # go further
 ```
 
 `-s` is what makes pytest print the report to the terminal; the same data is written as JSON to
-`e2e/stress/reports/<scenario>.json` (checked into the repo so a diff shows whether a later change
-made things better or worse). `e2e/stress/reports/baseline_20x3.json` and `target_100x10.json` are
+`tests/stress/reports/<scenario>.json` (checked into the repo so a diff shows whether a later change
+made things better or worse). `tests/stress/reports/baseline_20x3.json` and `target_100x10.json` are
 one captured run each on a 4-core sandbox machine — expect different absolute numbers on different
 hardware, but the same *shape*.
 
@@ -29,10 +29,10 @@ hardware, but the same *shape*.
 
 | File | Role |
 |---|---|
-| `e2e/stress/conftest.py` | A dedicated server per scenario (own port, own throwaway SQLite file), with re-engagement timings shortened (first nudge 6s, second 12s, idle-close 20s) so silent candidates actually close within the test instead of needing the production 45s/120s/5min. |
-| `e2e/stress/personas.py` | Randomised, organic candidate scripts (plain chat message lists) — more than a dozen scenario shapes (qualified, qualified-with-flag, every knockout, the async ID registry answering valid/not-found/down, 3-re-ask drop-off, mid-conversation drop-off, bilingual, FAQ interjections) — reused by every run, no fixed scenario list to "play against". |
-| `e2e/stress/metrics.py` | `ProcessSampler` (psutil on the server's PID, sampled every 0.25s in a background thread: CPU%, RSS, thread count, inet connections) and `LatencyRecorder` (per-call latency/percentiles/throughput/error-rate, grouped by endpoint/action), independent of the scenario logic. |
-| `e2e/stress/test_concurrent_load.py` | The scenario: 100 `httpx.AsyncClient` candidates (`asyncio.gather`, no browser — that's all the candidate channel ever does) + 10 real headless-Chromium recruiters (Playwright's async API, one browser / 10 contexts) running concurrently; then correctness checks against the live data. |
+| `tests/stress/conftest.py` | A dedicated server per scenario (own port, own throwaway SQLite file), with re-engagement timings shortened (first nudge 6s, second 12s, idle-close 20s) so silent candidates actually close within the test instead of needing the production 45s/120s/5min. |
+| `tests/stress/personas.py` | Randomised, organic candidate scripts (plain chat message lists) — more than a dozen scenario shapes (qualified, qualified-with-flag, every knockout, the async ID registry answering valid/not-found/down, 3-re-ask drop-off, mid-conversation drop-off, bilingual, FAQ interjections) — reused by every run, no fixed scenario list to "play against". |
+| `tests/stress/metrics.py` | `ProcessSampler` (psutil on the server's PID, sampled every 0.25s in a background thread: CPU%, RSS, thread count, inet connections) and `LatencyRecorder` (per-call latency/percentiles/throughput/error-rate, grouped by endpoint/action), independent of the scenario logic. |
+| `tests/stress/test_concurrent_load.py` | The scenario: 100 `httpx.AsyncClient` candidates (`asyncio.gather`, no browser — that's all the candidate channel ever does) + 10 real headless-Chromium recruiters (Playwright's async API, one browser / 10 contexts) running concurrently; then correctness checks against the live data. |
 
 ### Correctness bars (hard failures — these should never trip, *however slow* the system gets)
 
@@ -80,7 +80,7 @@ Conclusions, in order of how confident they are:
 2. **The bottleneck is the sync-route thread pool, not the CPU or SQLite locking.** The server's
    thread count reliably plateaus at ~42-46 regardless of how many more candidates are added
    (tested up to 300), which is the signature of Starlette's default thread-pool capacity for
-   `def` (non-`async def`) routes (every route in `backend/app.py` and `backend/backoffice/router.py`
+   `def` (non-`async def`) routes (every route in `backend/app.py`, `backend/api/sessions.py` and `backend/backoffice/router.py`
    except the Twilio/verification-callback webhooks is a plain `def`, so every request is queued
    onto that pool). CPU usage stays well under 100% of one core on average — the server is mostly
    *waiting* (for a free thread, or for SQLite's single writer), not computing.
@@ -114,4 +114,4 @@ None of this requires a rewrite; in rough order of effort:
    candidates, but would show up as `database_locked_errors` in a future report): move to Postgres,
    or batch/serialise writes through a single worker task instead of one connection per request.
 4. **Re-run this suite after any of the above** with the same `STRESS_CANDIDATES`/`STRESS_RECRUITERS`
-   and compare `e2e/stress/reports/*.json` — that's what this tool is for.
+   and compare `tests/stress/reports/*.json` — that's what this tool is for.
