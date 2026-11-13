@@ -132,15 +132,24 @@ def test_expired_abandoned_session_starts_fresh(channel, store):
     assert new_row["id"] != old_id
 
 
-def test_final_decision_is_final_new_conversation_starts(channel):
+@pytest.mark.identity
+def test_a_decided_candidate_who_writes_again_is_not_screened_again(channel):
+    """Identity analysis §2B. This test used to pin the opposite (``test_final_decision_is_final_new_conversation_starts``):
+    a message after the decision opened a second screening from scratch, so a qualified candidate asking
+    "¿hay novedades?" got the opening and became a duplicate candidate. The decision stays final, the
+    candidate stays one and their message is kept with their screening."""
     channel.handle_inbound(CONTACT, "hola")
     for text in QUALIFIED_SCRIPT:
         channel.handle_inbound(CONTACT, text)
     qualified_id = db.find_session_by_contact("whatsapp", NUMBER)["id"]
 
-    twiml = channel.handle_inbound(CONTACT, "hola otra vez")
-    assert "Grupo Sazón" in messages_in(twiml)[0]
-    assert db.find_session_by_contact("whatsapp", NUMBER)["id"] != qualified_id
+    twiml = channel.handle_inbound(CONTACT, "hola otra vez, ¿hay novedades de lo mío?")
+
+    assert not any("Grupo Sazón" in m for m in messages_in(twiml)), "a new screening started"
+    row = db.find_session_by_contact("whatsapp", NUMBER)
+    assert row["id"] == qualified_id and row["status"] == "qualified"
+    user_lines = [m["content"] for m in db.get_session(qualified_id)["messages"] if m["role"] == "user"]
+    assert user_lines[-1] == "hola otra vez, ¿hay novedades de lo mío?"
 
 
 def test_no_license_disqualified_over_whatsapp(channel):

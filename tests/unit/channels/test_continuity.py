@@ -14,6 +14,9 @@ from backend.storage import db
     ("+34 600 111 222", "+34600111222"),
     ("+34-600-111-222", "+34600111222"),
     ("(+52) 55 1234 5678", "+525512345678"),
+    # the "00" international prefix, as people dial it in Spain and Mexico (identity analysis §2A / E4)
+    pytest.param("0034 600 111 222", "+34600111222", marks=pytest.mark.identity),
+    pytest.param("00 52 55 1234 5678", "+525512345678", marks=pytest.mark.identity),
     ("laura@example.com", "laura@example.com"),
     ("  ", None),
     (None, None),

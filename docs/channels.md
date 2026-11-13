@@ -57,12 +57,27 @@ When a candidate's final decision waits for an external check (`verifying`), a n
 
 ### Session identity
 
-Web sessions are addressed by session id; channel sessions by phone number
-(`sessions.contact`, E.164, `whatsapp:` prefix stripped). One number maps to
-one live screening **per process**: an active session continues, an abandoned one resumes
-inside the 48h window (same rules as the web resume banner), and
-qualified/disqualified stay final — a new message/call starts a fresh
-conversation instead.
+Web sessions are addressed by session id. WhatsApp and phone address a **candidate**: the
+phone number is an identity key (canonical form: `+52…` for WhatsApp's `+521…`, `00` and
+national numbers normalised, withheld caller IDs identify nobody), and the candidate owns
+their applications (sessions). Full design: `docs/identity_design.md`. For a message or call:
+
+1. an application a recruiter is talking to the candidate in gets it (the assistant stays silent);
+2. otherwise the application the conversation on this channel is about (its *focus*: the last
+   one the candidate talked to here, or the last one a recruiter / check decision wrote from);
+3. otherwise the line's process: an active application continues (one untouched for longer than
+   the resume window — 14 days for a recruiter's referral — expires), an abandoned one resumes
+   inside the 48h window;
+4. a decision of the last `FOLLOW_UP_DAYS` (30) gets a **follow-up**: the message is kept with
+   that application for the recruiter and answered with a closing note; a call takes a message.
+   Nobody is screened again from scratch, and a knockout can't be undone by writing again;
+5. otherwise a new application **of the same candidate** starts.
+
+One live application per candidate and process; applications to several processes at the same
+time are allowed and linked. Pushes reach the *person* on any channel they have used (labelled
+with the job when they have several live applications), and an ID document typed in a screening
+links candidates too (keyed hash, never the number; a second live application for the same
+process closes as `duplicate`). Phone-provider retries (same call, same prompt) are answered once.
 
 ### Channel continuity (switching channels mid-screening)
 
@@ -84,11 +99,9 @@ every line came through (see *Conversation registry*):
   backoffice with a phone number (with country code; spaces and dashes are
   normalised) is recognised when they write or call, and gets the opening.
 
-Lookup order: this channel's latest session first (the rule above), then the
-newest undecided session (active, verifying, or abandoned inside the resume
-window) of the same number and process on any channel. Final decisions are
-never reopened from another channel. During a recruiter takeover the switch is
-recorded but the assistant stays silent.
+Lookup order: see *Session identity* above. Final decisions are never reopened
+from another channel (the follow-up keeps them closed). During a recruiter
+takeover the switch is recorded but the assistant stays silent.
 
 `source` keeps the channel where the screening **started** (analytics, the
 *Canal* filter); the session also records `channel` (latest) and `channels`

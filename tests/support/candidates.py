@@ -33,8 +33,22 @@ UNKNOWN_ID = "99000001C"
 ERROR_ID = "98000001Z"
 SLOW_ID = "97000001P"
 
+_DNI_LETTERS = "TRWAGMYFPDXBNJZSQVHLCKE"
 
-def construction_qualified(name: str, document: str = VALID_ID) -> list[str]:
+
+def unique_dni(prefix: str = "") -> str:
+    """A checksum-valid DNI nobody else in the test run has. An ID document identifies a person, so
+    candidates that share one are the same candidate (merged; a second live application in the same
+    process closes as a duplicate). ``prefix`` picks the mock registry's answer: "" valid, "99" not
+    found, "98" registry error, "97" valid but slow."""
+    while True:
+        number = prefix + "".join(random.choice(string.digits) for _ in range(8 - len(prefix)))
+        if prefix or number[:2] not in ("99", "98", "97"):
+            return f"{number}{_DNI_LETTERS[int(number) % 23]}"
+
+
+def construction_qualified(name: str, document: str | None = None) -> list[str]:
+    document = document or unique_dni()
     return ["Hola, busco trabajo en obra", name, "sí, tengo 34 años", "sí, tengo NIE con permiso",
             f"mi DNI es {document}", "Getafe", "sí, sin problema", "no, no lo tengo",
             "3 años de peón y algo de albañilería", "tengo coche", "el lunes"]
@@ -76,9 +90,10 @@ def unique_phone() -> str:
     return "+346" + "".join(random.choice(string.digits) for _ in range(8))
 
 
-def construction_answers(name: str, document: str = VALID_ID) -> list[str]:
+def construction_answers(name: str, document: str | None = None) -> list[str]:
     """Answers after the opening: 0 start, 1 name, 2 age, 3 permit, 4 ID, 5 area, 6 physical, 7 PRL,
-    8 experience, 9 transport, 10 start date."""
+    8 experience, 9 transport, 10 start date. Each candidate gets their own ID document by default."""
+    document = document or unique_dni()
     return ["sí", name, "sí, tengo 34 años", "sí, tengo NIE con permiso", f"mi DNI es {document}", "Getafe",
             "sí, sin problema", "no, no lo tengo", "3 años de peón", "tengo coche", "el lunes"]
 

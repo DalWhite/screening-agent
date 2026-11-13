@@ -382,6 +382,8 @@ class JobProfile(BaseModel):
     faq: list[FaqItem] = Field(default_factory=list)
     service_areas: list[AreaSpec] = Field(default_factory=list)
     max_stage_attempts: int = Field(default=3, ge=1, le=10)
+    # days after a decision during which the candidate's messages continue that application (FOLLOW_UP_DAYS)
+    follow_up_days: Optional[int] = Field(default=None, ge=1, le=365)
 
     # published revision this object represents (not part of the stored JSON)
     revision: int = Field(default=1, exclude=True)

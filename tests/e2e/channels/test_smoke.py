@@ -13,15 +13,17 @@ import re
 
 from playwright.sync_api import Page, expect
 
-from tests.support.candidates import unique_phone, unique_surname
+from tests.support.candidates import unique_dni, unique_phone, unique_surname
 
 
-ANSWERS = ["sí", None, "sí, tengo 34 años", "sí, tengo NIE con permiso", "mi DNI es 12345678Z", "Getafe",
+ANSWERS = ["sí", None, "sí, tengo 34 años", "sí, tengo NIE con permiso", "mi DNI es {dni}", "Getafe",
            "sí, sin problema", "no, no lo tengo", "3 años de peón", "tengo coche", "el lunes"]
 
 
 def script(name: str) -> list[str]:
-    return [name if a is None else a for a in ANSWERS]
+    """One candidate: their own name and their own ID document (a shared one would make them one person)."""
+    dni = unique_dni()
+    return [name if a is None else a.format(dni=dni) for a in ANSWERS]
 
 
 def test_recruiter_sees_one_candidate_across_whatsapp_and_phone(page: Page, channels, sim):

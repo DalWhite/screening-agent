@@ -115,6 +115,8 @@ sequenceDiagram
 - `recruiter_notes(id, session_id, author, body, ts)`.
 - `pipeline_stages(id, label, color, position, created_at)`: the recruiter-editable hiring stages, seeded with the defaults from `backend/pipeline.py`. `screening`, `review`, `qualified` and `rejected` are system stages (used by the automatic placement) and can't be deleted.
 - `profiles(id, latest_revision, seed_hash, draft_json, draft_revision, …)` and `profile_versions(profile_id, revision, data_json, published_at, published_by, note)`; `sessions.profile_revision` pins each session.
+- `candidates(id, merged_into, channels_json)` and `candidate_keys(kind, value, candidate_id, verified, last_seen)`: the person behind applications (phone numbers in canonical form, ID documents as keyed hashes); `sessions.candidate_id` links each application, with at most one live application per candidate and process (`uq_live_application`). See `docs/identity_design.md`.
+- `idempotency(scope, key, state, response_json)`: phone-provider retries (same call, same prompt) answered once.
 - `verifications(id, session_id, check_id, provider, status, payload_json, result_detail, reference, attempts, due_at, deadline_at, completed_at, decided_by)`: the outbox of external checks. `payload_json` (which may hold a full ID number) is purged once the check has a definitive answer.
 
 Migrations are additive (`_ADDED_COLUMNS`); databases from the courier-only release are upgraded in place and backfilled (profile `delivery_courier`, pipeline stage, name, score). SQLite runs in WAL mode, so backoffice reads never block candidate turns.

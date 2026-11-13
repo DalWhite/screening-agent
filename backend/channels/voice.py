@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+import time
+import uuid
 from dataclasses import dataclass
 from typing import Optional
 
 from ..config import settings
 from ..screening.agent import ScreeningAgent, SessionState
-from ..screening.schema import TERMINAL_STAGES
+from ..screening.schema import FINAL_STAGES, TERMINAL_STAGES
 from ..session_store import SessionStore
 from ..storage import db
 from .base import VOICE_LOCALES, BaseChannel, strip_for_voice, voice_locale
@@ -33,6 +35,17 @@ TAKEOVER_GOODBYE: dict[str, str] = {
     "es": "De acuerdo. El equipo de selección te contactará pronto. ¡Hasta luego!",
     "en": "All right. The recruiting team will contact you soon. Bye for now!",
 }
+
+# The caller already has a decision (follow-up): no second screening, the call takes a message.
+AFTER_DECISION_GREETING: dict[str, str] = {
+    "es": "Hola de nuevo. Ya tenemos tu candidatura y el equipo de selección se pondrá en contacto contigo. "
+          "Si quieres, dime tu mensaje y se lo paso.",
+    "en": "Hello again. We already have your application and the recruiting team will get in touch. "
+          "If you like, leave me a message and I'll pass it on.",
+}
+
+# Provider retries of the same webhook (same call, same prompt) wait for and replay the first answer.
+RETRY_WAIT_SECONDS = 10.0
 
 SESSION_LOST_MESSAGES: dict[str, str] = {
     "es": "Lo siento, ha habido un problema técnico. Vuelve a llamar y empezamos de nuevo.",
@@ -65,6 +78,13 @@ class VoiceAction:
     session_id: Optional[str] = None
     listen: bool = True
     retries: int = 0  # in-call silence re-prompts so far
+    # identifies this prompt: adapters put it in the answer URL, so a provider retry of the same
+    # answer is recognised (and replayed) instead of being processed twice
+    turn: Optional[str] = None
+
+    def to_json(self) -> dict:
+        return {"text": self.text, "locale": self.locale, "session_id": self.session_id, "listen": self.listen,
+                "retries": self.retries, "turn": self.turn}
 
     @property
     def hangup(self) -> bool:
@@ -95,15 +115,45 @@ class VoiceChannel(BaseChannel):
     # ---------- provider events ----------
 
     def start_call(self, from_addr: str, call_id: str) -> VoiceAction:
-        """Incoming call: open/resume a session and speak the first prompt."""
+        """Incoming call: open/resume a session and speak the first prompt. A retry of the same
+        call's webhook gets the same answer (one call, one screening)."""
+        return self._once("voice:start", call_id, lambda: self._start_call(from_addr, call_id))
+
+    def _once(self, scope: str, key: Optional[str], handle) -> VoiceAction:
+        """Process a provider webhook once per ``key``; duplicates wait for the first answer and replay it."""
+        if not key:
+            return handle()
+        deadline = time.monotonic() + RETRY_WAIT_SECONDS
+        while not db.claim_idempotency(scope, key):
+            done = db.idempotency_result(scope, key)
+            if done is not None and done["state"] == "done" and done["response"]:
+                log.info("voice %s %s: provider retry answered with the first response", scope, key)
+                return VoiceAction(**done["response"])
+            if time.monotonic() > deadline:
+                log.warning("voice %s %s still being processed after %.0fs", scope, key, RETRY_WAIT_SECONDS)
+                return handle()
+            time.sleep(0.05)
+        try:
+            action = handle()
+        except Exception:
+            db.release_idempotency(scope, key)  # the retry may succeed
+            raise
+        db.finish_idempotency(scope, key, action.to_json())
+        return action
+
+    def _start_call(self, from_addr: str, call_id: str) -> VoiceAction:
         resolved = self.resolve_session(from_addr)
         state = resolved.state
         if call_id:
             self.calls[call_id] = state.id
         db.append_events(state.id, [{"type": "voice_call_started", "payload": {"call_sid": call_id}}], state.stage)
 
-        if state.bot_paused and state.stage not in TERMINAL_STAGES:
+        if state.bot_paused:
             text = _localized(TAKEOVER_GREETING, state)  # no screening question while a recruiter owns it
+            self.record_assistant(state, text, kind="notice")
+            db.save_session(state)
+        elif state.stage in FINAL_STAGES:  # follow-up on a decision: take a message, no new screening
+            text = _localized(AFTER_DECISION_GREETING, state)
             self.record_assistant(state, text, kind="notice")
             db.save_session(state)
         elif resolved.greetings:
@@ -120,8 +170,14 @@ class VoiceChannel(BaseChannel):
         return self._ask(state, text, retries=0)
 
     def speech(self, session_id: str, speech: str, retries: int = 0, confidence: Optional[str] = None,
-               call_id: Optional[str] = None) -> VoiceAction:
-        """The caller's (transcribed) answer; empty = they said nothing before the timeout."""
+               call_id: Optional[str] = None, turn: Optional[str] = None) -> VoiceAction:
+        """The caller's (transcribed) answer; empty = they said nothing before the timeout. ``turn`` is
+        the prompt's token: a provider retry of the same answer is replayed, not processed twice."""
+        key = f"{call_id}:{turn}" if call_id and turn else None
+        return self._once("voice:turn", key, lambda: self._speech(session_id, speech, retries, confidence, call_id))
+
+    def _speech(self, session_id: str, speech: str, retries: int, confidence: Optional[str],
+                call_id: Optional[str]) -> VoiceAction:
         state = self.store.get(session_id)
         if state is None:
             return VoiceAction(_pick(SESSION_LOST_MESSAGES, "es"), VOICE_LOCALES["es"], listen=False)
@@ -196,7 +252,8 @@ class VoiceChannel(BaseChannel):
 
     @staticmethod
     def _ask(state: SessionState, text: str, retries: int) -> VoiceAction:
-        return VoiceAction(text, voice_locale(state.language), session_id=state.id, listen=True, retries=retries)
+        return VoiceAction(text, voice_locale(state.language), session_id=state.id, listen=True, retries=retries,
+                           turn=uuid.uuid4().hex[:12])
 
     @staticmethod
     def _goodbye(state: SessionState, text: str) -> VoiceAction:

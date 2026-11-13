@@ -25,6 +25,7 @@ STATUS_LABELS: dict[str, dict[str, str]] = {
     "disqualified": {"es": "No califica", "en": "Disqualified"},
     "abandoned": {"es": "Incompleto", "en": "Incomplete"},
     "verifying": {"es": "En verificación", "en": "Verifying"},
+    "duplicate": {"es": "Candidatura duplicada", "en": "Duplicate application"},
 }
 
 CHECK_STATUS_LABELS: dict[str, dict[str, str]] = {

@@ -53,8 +53,8 @@ class TwilioVoice:
         return self.render(self.channel.start_call(from_addr, call_sid))
 
     def handle_speech(self, session_id: str, speech: str, retries: int = 0, confidence: Optional[str] = None,
-                      call_sid: Optional[str] = None) -> str:
-        return self.render(self.channel.speech(session_id, speech, retries, confidence, call_sid))
+                      call_sid: Optional[str] = None, turn: Optional[str] = None) -> str:
+        return self.render(self.channel.speech(session_id, speech, retries, confidence, call_sid, turn=turn))
 
     def handle_call_ended(self, call_sid: str, call_status: str) -> None:
         self.channel.call_ended(call_sid, call_status)
@@ -69,7 +69,8 @@ class TwilioVoice:
             response.hangup()
             return str(response)
         collect = (f"{self.config.public_base_url}{VOICE_COLLECT}"  # empty base: relative, resolved by Twilio
-                   f"?session_id={quote(action.session_id)}&retries={action.retries}")
+                   f"?session_id={quote(action.session_id)}&retries={action.retries}"
+                   + (f"&turn={quote(action.turn)}" if action.turn else ""))
         gather = Gather(input="speech", language=action.locale, action=collect, method="POST", speech_timeout="auto")
         gather.say(action.speech, **say_kwargs)
         response.append(gather)
@@ -86,11 +87,13 @@ class TwilioVoice:
             return xml(self.handle_call_start(form.get("From", ""), form.get("CallSid", "")))
 
         @router.post(VOICE_COLLECT)
-        async def voice_collect(request: Request, session_id: str, retries: int = 0) -> Response:
+        async def voice_collect(request: Request, session_id: str, retries: int = 0,
+                                turn: Optional[str] = None) -> Response:
             """Gather action: the caller's transcribed speech for one turn (empty = silence)."""
             form = await twilio_form(request, self.client, self.config.public_base_url)
             return xml(self.handle_speech(session_id, form.get("SpeechResult", ""), retries=retries,
-                                           confidence=form.get("Confidence"), call_sid=form.get("CallSid")))
+                                           confidence=form.get("Confidence"), call_sid=form.get("CallSid"),
+                                           turn=turn))
 
         @router.post(VOICE_STATUS)
         async def voice_status(request: Request) -> Response:

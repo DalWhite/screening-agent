@@ -13,6 +13,7 @@ from ..screening.schema import FINAL_STAGES, Lang, Stage, TERMINAL_STAGES, TurnD
 from ..session_store import SessionStore
 from ..storage import db
 from .. import verifications
+from ..identity import service as identity
 
 log = logging.getLogger("sazon.channels")
 
@@ -76,16 +77,25 @@ class ResolvedSession:
     previous_channel: Optional[str] = None
     first_contact: bool = False  # a screening someone else opened (recruiter) that the candidate never answered
     stored: bool = False  # greetings already in the transcript
+    follow_up: bool = False  # the candidate got back to us about a decided application
 
 
 class BaseChannel:
     """Shared behaviour for phone-number-addressed channels (WhatsApp, voice).
 
-    Maps a contact (E.164 number) to a screening session with the same
-    lifecycle rules as the web chat: active sessions continue, abandoned ones
-    resume inside `RESUME_WINDOW_HOURS`, final decisions stay final and a new
-    conversation starts instead. The session may have started on another
-    channel of the same process (channel continuity, see `_sessions_of`).
+    Maps a phone number to the *candidate* behind it, then to the application
+    (session) the message belongs to (docs/identity_design.md):
+
+    1. an application a recruiter is talking to the candidate in;
+    2. the application the conversation on this channel is about (its focus);
+    3. the line's process: an active application continues (unless it went
+       stale), an abandoned one resumes inside `RESUME_WINDOW_HOURS`;
+    4. a decision of the last `FOLLOW_UP_DAYS`: the message follows up on it
+       (a decided candidate is never screened again from scratch);
+    5. otherwise a new application of the same candidate.
+
+    Only applications reached through this same phone line are continued; the
+    candidate's other applications are linked, never taken over.
     """
 
     source = "channel"
@@ -100,19 +110,25 @@ class BaseChannel:
 
     def resolve_session(self, contact: str, language: Optional[str] = None,
                         store_greetings: bool = True) -> ResolvedSession:
-        """Find (or open) the candidate's screening. With ``store_greetings=False`` the caller
+        """Find (or open) the candidate's application. With ``store_greetings=False`` the caller
         stores the greetings itself, after the candidate's message, so the transcript keeps
         the real order (the candidate wrote first, then the agent greeted)."""
-        contact = normalize_contact(contact)
-        resolved = None
-        if contact:
-            for state in self._sessions_of(contact):
-                resolved = self._continue(state)
-                if resolved is not None:
-                    resolved = self._arrive(resolved)
-                    break
-        if resolved is None:
-            resolved = self._new_session(contact, language)
+        address = normalize_contact(contact)
+        key = identity.phone_key(address)
+        if key is None:  # no number, or a withheld one: nobody to recognise, nobody to mix up
+            resolved = self._new_session(None, language, candidate_id=None)
+        else:
+            with identity.lock(key):
+                candidate_id = identity.candidate_for_phone(key, verified=True, source=self.source)
+                resolved = None
+                for state, mode in self._applications_of(candidate_id, key):
+                    resolved = self._continue(state, mode)
+                    if resolved is not None:
+                        resolved = self._arrive(resolved)
+                        break
+                if resolved is None:
+                    resolved = self._new_session(address, language, candidate_id)
+                identity.note_channel(candidate_id, self.source, address=address, focus=resolved.state.id)
         if store_greetings:
             self.store_greetings(resolved)
         return resolved
@@ -137,28 +153,58 @@ class BaseChannel:
         resolved.greetings = []
         resolved.stored = True
 
-    def _sessions_of(self, contact: str) -> Iterator[SessionState]:
-        """Sessions this contact could be continuing, in order of preference.
-
-        This channel's latest session first (the historical rule), then undecided
-        sessions of the same process on other channels: the candidate who
-        started on WhatsApp and now calls, or who was registered by a recruiter.
-        """
-        own = self.store.find_by_contact(self.source, contact)
-        if own is not None:
-            yield own
+    def _line_profile(self) -> Optional[str]:
         try:
-            profile_id = self.agent.profiles.get(self.profile_id).id
+            return self.agent.profiles.get(self.profile_id).id
         except KeyError:
-            return
-        for state in self.store.find_live_by_contact(contact, profile_id):
-            if own is None or state.id != own.id:
-                yield state
+            return None
 
-    def _continue(self, state: SessionState) -> Optional[ResolvedSession]:
-        """Lifecycle rules: active sessions continue, abandoned ones resume inside the window,
-        final decisions stay final (None: start a new conversation)."""
+    def _process_active(self, profile_id: str) -> bool:
+        try:
+            return bool(self.agent.profiles.get(profile_id).active)
+        except KeyError:
+            return False
+
+    def _follow_up_days(self, state: SessionState) -> int:
+        try:
+            return identity.follow_up_days(self.agent.profile(state))
+        except KeyError:
+            return settings.follow_up_days
+
+    def _applications_of(self, candidate_id: str, key: str) -> Iterator[tuple[SessionState, str]]:
+        """The candidate's applications this message could belong to, in order of preference,
+        with how to treat each: ``recruiter`` / ``live`` / ``follow_up``."""
+        rows = [r for r in identity.applications(candidate_id) if identity.phone_key(r["contact"]) == key]
+        updated = {r["id"]: r["updated_at"] for r in rows}
+        states = [s for s in (self.store.get(r["id"]) for r in rows) if s is not None]
+        for state in states:  # a recruiter is talking to the candidate: their answer goes there
+            if state.bot_paused and identity.recently(updated.get(state.id), self._follow_up_days(state)):
+                yield state, "recruiter"
+        focus_id = identity.channel_info(candidate_id, self.source).get("focus")
+        focus = next((s for s in states if s.id == focus_id), None)
+        if focus is not None and self._process_active(focus.profile_id):
+            yield focus, "live"
+        line = self._line_profile()
+        own = [s for s in states if s.profile_id == line]
+        if line and self._process_active(line):
+            for state in own:
+                yield state, "live"
+        for state in ([focus] if focus is not None else []) + own:
+            yield state, "follow_up"
+
+    def _continue(self, state: SessionState, mode: str = "live") -> Optional[ResolvedSession]:
+        """Lifecycle rules (None: not this one). Active applications continue, abandoned ones resume
+        inside the window, decisions get a follow-up for a while and then stay closed."""
+        if mode == "recruiter":
+            return ResolvedSession(state=state)
+        if mode == "follow_up":
+            if state.stage in FINAL_STAGES and identity.recently(self._decided_at(state), self._follow_up_days(state)):
+                return ResolvedSession(state=state, follow_up=True)
+            return None
         if state.status == "active" and state.stage not in TERMINAL_STAGES:
+            if self._stale(state):
+                self._expire(state)
+                return None
             return ResolvedSession(state=state)
         if state.status == Stage.VERIFYING:
             return ResolvedSession(state=state)  # decision pending external checks: same conversation
@@ -175,6 +221,27 @@ class BaseChannel:
                 )
                 return ResolvedSession(state=state, greetings=[reply], resumed=True)
         return None
+
+    @staticmethod
+    def _decided_at(state: SessionState) -> Optional[str]:
+        return (state.summary or {}).get("generated_at") or state.last_candidate_ts.isoformat()
+
+    @staticmethod
+    def _stale(state: SessionState) -> bool:
+        """An "active" application nobody touched for longer than anyone could be expected to come back
+        to it (the silence monitor normally closes them within minutes)."""
+        if state.bot_paused:
+            return False  # a recruiter owns the conversation, however long it takes
+        never_answered = not any(m.get("role") == "user" for m in state.history)
+        limit = (timedelta(days=settings.referral_wait_days) if never_answered and state.source == "backoffice"
+                 else timedelta(hours=settings.resume_window_hours))
+        return datetime.now(timezone.utc) - state.last_candidate_ts > limit
+
+    def _expire(self, state: SessionState) -> None:
+        _, decision = self.agent.end(state, reason="expired")
+        db.save_session(state)
+        db.append_events(state.id, decision.events, state.stage)
+        log.info("session %s expired (stale), a new application starts", state.id)
 
     def _arrive(self, resolved: ResolvedSession) -> ResolvedSession:
         """The candidate reached us on this channel: record a channel switch and greet them.
@@ -205,9 +272,11 @@ class BaseChannel:
         log.info("session %s switched channel %s -> %s at %s", state.id, previous, self.source, state.stage)
         return resolved
 
-    def _new_session(self, contact: str, language: Optional[str]) -> ResolvedSession:
+    def _new_session(self, contact: Optional[str], language: Optional[str],
+                     candidate_id: Optional[str] = None) -> ResolvedSession:
         state = self.agent.new_session(source=self.source, language=language, contact=contact,
                                        profile_id=self.profile_id)
+        state.candidate_id = candidate_id
         opening = self.agent.opening(state)
         self.store.put(state)
         db.save_session(state)
@@ -225,6 +294,7 @@ class BaseChannel:
         """One agent turn + persistence, identical to the web chat's pipeline."""
         with self.store.lock(state.id):
             reply, decision = self.agent.process(state, text)
+            reply = link_identity(self.agent, state, decision, reply)
             persist_turn(state, text, reply, decision, channel=self.source, kind=kind, meta=meta, preface=preface)
         return reply, decision
 
@@ -238,6 +308,48 @@ class BaseChannel:
         """Undelivered messages (recruiter messages, check decisions) queued while the candidate was away.
         Undelivered re-engagement nudges are dropped: the candidate just came back."""
         return [m["content"] for m in db.pending_messages(state.id, channel=self.source, supersede=("nudge",))]
+
+
+DUPLICATE_NOTICE = {
+    "es": "Ya tenemos una candidatura tuya con este documento para este puesto, así que no abro otra. "
+          "Un reclutador la revisará y se pondrá en contacto contigo.",
+    "en": "We already have an application of yours with this document for this job, so I won't open another one. "
+          "A recruiter will review it and get in touch.",
+}
+
+
+def link_identity(agent: ScreeningAgent, state: SessionState, decision: TurnDecision, reply: str) -> str:
+    """An ID document typed in this turn is an identity key. If another candidate already has it, both are
+    the same person: merged. If that person already has a live application in this process, this one
+    closes as a duplicate (the recruiter reviews it) and the reply says so. Returns the reply to send."""
+    try:
+        profile = agent.profile(state)
+    except KeyError:
+        return reply
+    numbers = [decision.secrets[q.field] for q in profile.questions
+               if q.type == "id_document" and decision.secrets.get(q.field)]
+    if not numbers:
+        return reply
+    if not state.candidate_id:
+        db.save_session(state)  # storage assigns the application's candidate
+    for number in numbers:
+        match = identity.match_document(state, number)
+        if match is None:
+            continue
+        if match.live_duplicate:
+            notice = DUPLICATE_NOTICE.get(state.language.value) or DUPLICATE_NOTICE["es"]
+            if state.history and state.history[-1].get("role") == "assistant" and state.history[-1].get("content") == reply:
+                state.history.pop()  # the question that would have followed is not asked any more
+            reply = agent._close(state, decision, Stage.DUPLICATE, "duplicate_application", None, override=notice)
+            decision.check_requests.clear()  # nothing to verify on a duplicate
+            db.save_session(state)  # closed before the merge: one live application per candidate and process
+        moved = identity.merge_into(state, match.owner)
+        decision.events.append({"type": "identity_merge", "payload": {
+            "key": "id_document", "into": match.owner, "applications": len(moved),
+            "duplicate_of": match.live_duplicate}})
+        log.info("session %s: same ID document as candidate %s (merged, duplicate_of=%s)",
+                 state.id, match.owner, match.live_duplicate)
+    return reply
 
 
 def persist_turn(state: SessionState, user_text: str, reply: str, decision: TurnDecision,

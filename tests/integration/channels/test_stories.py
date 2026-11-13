@@ -16,7 +16,10 @@ sometimes a recruiter, sometimes Twilio misbehaving.
 
 from __future__ import annotations
 
+import pytest
+
 from backend.config import settings
+from tests.support.identity import assert_same_candidate
 
 LAURA = "+34600111222"
 CARLOS = "+34600333444"
@@ -382,14 +385,21 @@ def test_candidate_registered_by_a_recruiter_continues_on_whatsapp(channel_stack
     assert stack.session(created["id"])["channels"] == ["backoffice", "whatsapp"]
 
 
+@pytest.mark.identity
 def test_a_final_decision_is_not_reopened_from_another_channel(channel_stack, wa_provider):
+    """The knockout stands when the candidate calls. This test also pinned that the call opens an
+    unrelated second screening ("a new call is a new conversation"); whatever the re-application policy
+    ends up being (identity analysis §2B), the recruiter must see one candidate, not two."""
     stack = channel_stack(provider=wa_provider)
     laura = stack.sim.phone(LAURA)
     whatsapp_screening(laura, [COURIER[0], COURIER[1], "no tengo carnet"])
-    assert stack.session_for(laura)["status"] == "disqualified"
+    decided = stack.session_for(laura)
+    assert decided["status"] == "disqualified"
 
-    assert "Grupo Sazón" in laura.call().prompt  # a new call is a new conversation
-    assert sorted(s["source"] for s in stack.sessions_for(laura)) == ["voice", "whatsapp"]
+    laura.call().hangup()
+
+    assert stack.session(decided["id"])["status"] == "disqualified"  # never reopened from another channel
+    assert_same_candidate(*[s["id"] for s in stack.sessions_for(laura)])
 
 
 def test_channels_bound_to_different_processes_keep_separate_screenings(channel_stack, wa_provider):

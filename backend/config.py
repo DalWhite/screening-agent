@@ -66,6 +66,19 @@ class Settings:
     session_idle_seconds: int = field(default_factory=lambda: _int("SESSION_IDLE_SECONDS", 300))
     resume_window_hours: int = field(default_factory=lambda: _int("RESUME_WINDOW_HOURS", 48))
 
+    # --- Candidate identity (docs/identity_design.md) ---
+    # National numbers without a country code are read in this region (recruiters type "600 111 222")
+    default_phone_region: str = field(default_factory=lambda: os.getenv("DEFAULT_PHONE_REGION", "ES").strip().upper())
+    # After a decision, a candidate who writes or calls again continues that application (follow-up)
+    # for this many days; afterwards a new application of the same candidate starts. Per-profile override.
+    follow_up_days: int = field(default_factory=lambda: _int("FOLLOW_UP_DAYS", 30))
+    # A phone number unseen for this long no longer identifies the same person (numbers get recycled)
+    phone_key_max_age_days: int = field(default_factory=lambda: _int("PHONE_KEY_MAX_AGE_DAYS", 365))
+    # A screening a recruiter registered waits this long for the candidate's first message
+    referral_wait_days: int = field(default_factory=lambda: _int("REFERRAL_WAIT_DAYS", 14))
+    # Secret for the keyed hash of identity documents (never a plain hash). Empty: a key file next to the DB
+    identity_key_secret: str = field(default_factory=lambda: os.getenv("IDENTITY_KEY_SECRET", "").strip())
+
     pii_redaction: bool = field(default_factory=lambda: _bool("PII_REDACTION", True))
     retention_days: int = field(default_factory=lambda: _int("RETENTION_DAYS", 90))
 

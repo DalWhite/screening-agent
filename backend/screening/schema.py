@@ -23,11 +23,14 @@ class Stage:
     ABANDONED = "abandoned"
     # all questions answered, final decision waits for blocking external checks
     VERIFYING = "verifying"
+    # the candidate already has a live application in this process (found when identities were merged)
+    DUPLICATE = "duplicate"
 
 
 # no more questions are asked in these stages
-TERMINAL_STAGES = frozenset({Stage.QUALIFIED, Stage.DISQUALIFIED, Stage.ABANDONED, Stage.VERIFYING})
-FINAL_STAGES = frozenset({Stage.QUALIFIED, Stage.DISQUALIFIED})
+TERMINAL_STAGES = frozenset({Stage.QUALIFIED, Stage.DISQUALIFIED, Stage.ABANDONED, Stage.VERIFYING, Stage.DUPLICATE})
+# decisions: never resumed by the candidate (a recruiter can reopen them)
+FINAL_STAGES = frozenset({Stage.QUALIFIED, Stage.DISQUALIFIED, Stage.DUPLICATE})
 
 
 class Intent(str, Enum):

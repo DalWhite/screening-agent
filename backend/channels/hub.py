@@ -95,11 +95,11 @@ class ChannelHub:
 
     def _push_channels(self, state: SessionState) -> list[MessagingChannel]:
         channels = self.messaging
-        order = [state.current_channel] + list(reversed(state.channels or [state.source]))
+        order = [state.current_channel] + list(reversed(state.channels or [state.source])) + list(channels)
         seen: list[MessagingChannel] = []
         for name in order:
             channel = channels.get(name)
-            if channel is not None and channel not in seen and state.reachable_on(name):
+            if channel is not None and channel not in seen and channel.can_reach(state):
                 seen.append(channel)
         return seen
 

@@ -14,6 +14,7 @@ import re
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from ..identity import service as identity
 from ..pipeline import STAGE_COLORS
 from ..screening.agent import ScreeningAgent, SessionState
 from ..screening.profile import localize
@@ -107,6 +108,10 @@ class BackofficeService:
                                             for q in profile.questions]}
         session["pending_question"] = pending_question
         session["chat_link"] = f"/?session={session_id}"
+        # the same person's other applications (any process, any channel)
+        session["applications"] = [
+            {k: r[k] for k in ("id", "profile_id", "status", "stage", "source", "started_at", "last_ts")}
+            for r in identity.applications(session.get("candidate_id")) if r["id"] != session_id]
         return session
 
     def _cards(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -374,10 +379,34 @@ class BackofficeService:
     def create_candidate(self, profile_id: str, by: str, name: Optional[str] = None, contact: Optional[str] = None,
                          language: Optional[str] = None, note: Optional[str] = None) -> dict[str, Any]:
         try:
-            state = self.agent.new_session(source="backoffice", language=language, contact=_clean_contact(contact),
+            clean = _clean_contact(contact)
+        except ValueError as exc:
+            raise Invalid(str(exc)) from exc
+        key = identity.phone_key(clean)
+        if key is None:
+            return self._create_candidate(profile_id, by, name, clean, language, note, None)
+        with identity.lock(key):
+            candidate_id = identity.candidate_for_phone(key, verified=False, source="backoffice")
+            try:
+                live = identity.live_applications(candidate_id, profile_id=self.agent.profiles.get(profile_id).id)
+            except KeyError as exc:
+                raise Invalid(f"unknown profile {profile_id!r}") from exc
+            if live:  # already screening (or registered) for this process: no duplicate
+                existing = live[0]["id"]
+                self._event(existing, "referral_existing", {"by": by, "profile_id": profile_id})
+                if note:
+                    self.add_note(existing, note, by)
+                return {"id": existing, "chat_link": f"/?session={existing}", "existing": True}
+            return self._create_candidate(profile_id, by, name, clean, language, note, candidate_id)
+
+    def _create_candidate(self, profile_id: str, by: str, name: Optional[str], contact: Optional[str],
+                          language: Optional[str], note: Optional[str], candidate_id: Optional[str]) -> dict[str, Any]:
+        try:
+            state = self.agent.new_session(source="backoffice", language=language, contact=contact,
                                            profile_id=profile_id)
         except KeyError as exc:
             raise Invalid(f"unknown profile {profile_id!r}") from exc
+        state.candidate_id = candidate_id
         profile = self.agent.profile(state)
         if name:
             name_field = profile.field_of_type("name")
@@ -437,6 +466,11 @@ class BackofficeService:
     def reopen(self, session_id: str, by: str, question_id: Optional[str] = None) -> dict[str, Any]:
         state = self._state(session_id)
         previous = state.status
+        if state.status not in identity.LIVE:
+            other = identity.live_applications(state.candidate_id, profile_id=state.profile_id, exclude=state.id)
+            if other:  # one live application per candidate and process
+                raise Invalid(f"el candidato ya tiene una candidatura en curso para este proceso ({other[0]['id']}): "
+                              "continúa esa")
         try:
             message = self.agent.reopen(state, question_id)
         except ValueError as exc:
@@ -477,13 +511,17 @@ _PHONE_RE = re.compile(r"[+\d\s().-]{6,30}")
 
 def _clean_contact(contact: Optional[str]) -> Optional[str]:
     """Phone numbers are stored like channels address them (``+34600111222``), so a candidate
-    registered by a recruiter is recognised when they write on WhatsApp or call (the number
-    must include the country code, as WhatsApp and caller ID always do). Anything else (an
-    email...) is kept as typed."""
+    registered by a recruiter is recognised when they write on WhatsApp or call: separators go,
+    ``00`` is ``+`` and national numbers are read in ``DEFAULT_PHONE_REGION``. A number that can't
+    be placed is refused (ValueError) rather than stored in a form no channel will ever match.
+    Anything else (an email...) is kept as typed."""
     value = (contact or "").strip()
     digits = re.sub(r"\D", "", value)
     if _PHONE_RE.fullmatch(value) and len(digits) >= 6:
-        value = ("+" if "+" in value else "") + digits
+        key = identity.phone_key(value)
+        if key is None:
+            raise ValueError(f"no se reconoce el teléfono {value!r}: añade el prefijo de país (p. ej. +34, +52)")
+        return key
     return value or None
 
 

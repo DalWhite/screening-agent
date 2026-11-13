@@ -50,6 +50,7 @@ def state_from_row(row: dict) -> Optional[SessionState]:
         abuse_count=int(row.get("abuse_count") or 0),
         channel=row.get("channel") or row["source"],
         channels=list(row.get("channels") or [row["source"]]),
+        candidate_id=row.get("candidate_id"),
     )
     full = db.get_session(row["id"]) or {}
     # recruiter messages are part of the conversation the model must see (as the assistant side)

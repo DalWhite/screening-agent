@@ -117,6 +117,8 @@ class VonageVoice:
         ncco = [talk]
         if action.listen and action.session_id:
             event_url = f"{base_url}{INPUT}?session_id={quote(action.session_id)}&retries={action.retries}"
+            if action.turn:
+                event_url += f"&turn={quote(action.turn)}"
             ncco.append({"action": "input", "type": ["speech"], "eventUrl": [event_url], "eventMethod": "POST",
                          "speech": {"language": action.locale, "endOnSilence": 1.5, "startTimeout": 10,
                                     "maxDuration": 60}})
@@ -139,13 +141,15 @@ class VonageVoice:
             return JSONResponse(self.render(action, self._base_url(request)))
 
         @router.post(INPUT)
-        async def speech_input(request: Request, session_id: str, retries: int = 0) -> JSONResponse:
+        async def speech_input(request: Request, session_id: str, retries: int = 0,
+                               turn: Optional[str] = None) -> JSONResponse:
             """Result of an ``input`` action: the caller's words, or a timeout (silence)."""
             data = self._json(await self._verified_body(request))
             results = (data.get("speech") or {}).get("results") or []
             best = max(results, key=lambda r: float(r.get("confidence") or 0), default={})
             action = self.channel.speech(session_id, str(best.get("text") or ""), retries=retries,
-                                         confidence=best.get("confidence"), call_id=str(data.get("uuid") or ""))
+                                         confidence=best.get("confidence"), call_id=str(data.get("uuid") or ""),
+                                         turn=turn)
             return JSONResponse(self.render(action, self._base_url(request)))
 
         @router.post(EVENT)

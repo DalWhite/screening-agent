@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     assignee TEXT,
     tags_json TEXT NOT NULL DEFAULT '[]',
     interview_at TEXT,
-    bot_paused INTEGER NOT NULL DEFAULT 0
+    bot_paused INTEGER NOT NULL DEFAULT 0,
+    candidate_id TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,6 +154,34 @@ CREATE TABLE IF NOT EXISTS channel_inbound (
     received_at TEXT NOT NULL,
     PRIMARY KEY (provider, message_id)
 );
+CREATE TABLE IF NOT EXISTS candidates (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    merged_into TEXT REFERENCES candidates(id),
+    merged_at TEXT,
+    channels_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS candidate_keys (
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    candidate_id TEXT NOT NULL REFERENCES candidates(id),
+    verified INTEGER NOT NULL DEFAULT 0,
+    source TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    PRIMARY KEY (kind, value)
+);
+CREATE INDEX IF NOT EXISTS idx_candidate_keys_candidate ON candidate_keys(candidate_id);
+CREATE TABLE IF NOT EXISTS idempotency (
+    scope TEXT NOT NULL,
+    key TEXT NOT NULL,
+    state TEXT NOT NULL,
+    response_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (scope, key)
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_candidate ON sessions(candidate_id, profile_id);
 CREATE INDEX IF NOT EXISTS idx_deliveries_external ON channel_deliveries(provider, external_id);
 CREATE INDEX IF NOT EXISTS idx_deliveries_session ON channel_deliveries(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
@@ -187,7 +216,14 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("messages", "channel", "TEXT"),
     ("messages", "kind", "TEXT NOT NULL DEFAULT 'text'"),
     ("messages", "meta_json", "TEXT NOT NULL DEFAULT '{}'"),
+    # candidate identity: the person an application (session) belongs to
+    ("sessions", "candidate_id", "TEXT"),
 ]
+
+# One live application per candidate and process (created after the backfill: older databases may
+# hold duplicates that are closed first). Several processes at the same time are fine.
+_LIVE_APPLICATION_INDEX = ("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_application ON sessions(candidate_id, profile_id) "
+                           "WHERE status IN ('active', 'verifying')")
 
 
 def _now() -> str:
@@ -240,6 +276,11 @@ def init_db() -> None:
         if "sessions.profile_revision" in added:
             # sessions from before profile revisions were screened by the seed profiles (revision 1)
             conn.execute("UPDATE sessions SET profile_revision=1 WHERE profile_revision IS NULL")
+        if conn.execute("SELECT 1 FROM sessions WHERE candidate_id IS NULL LIMIT 1").fetchone():
+            _backfill_candidates(conn)
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name='uq_live_application'").fetchone():
+            _close_duplicate_live_applications(conn)
+            conn.execute(_LIVE_APPLICATION_INDEX)
 
 
 def _backfill(conn: sqlite3.Connection) -> None:
@@ -255,6 +296,47 @@ def _backfill(conn: sqlite3.Connection) -> None:
         )
         _refresh_search_text(conn, session["id"])
     log.info("backfilled backoffice columns for %d legacy sessions", len(rows))
+
+
+def _backfill_candidates(conn: sqlite3.Connection) -> None:
+    """Sessions stored before candidate identity: one candidate per canonical phone number."""
+    from ..identity.phones import canonical_phone
+
+    rows = conn.execute("SELECT id, contact, source FROM sessions WHERE candidate_id IS NULL "
+                        "ORDER BY started_at, rowid").fetchall()
+    linked = 0
+    for row in rows:
+        key = canonical_phone(row["contact"])
+        if key is None:
+            candidate_id = _new_candidate(conn)
+        else:
+            known = conn.execute("SELECT 1 FROM candidate_keys WHERE kind='phone' AND value=?", (key,)).fetchone()
+            candidate_id = _candidate_for_key(conn, "phone", key, row["source"] in ("whatsapp", "voice"), row["source"])
+            if known:
+                linked += 1
+                conn.execute("INSERT INTO events (session_id, type, payload_json, ts, stage) VALUES (?,?,?,?,NULL)",
+                             (row["id"], "identity_link", json.dumps({"key": "phone", "by": "migration"}), _now()))
+        conn.execute("UPDATE sessions SET candidate_id=? WHERE id=?", (candidate_id, row["id"]))
+    log.info("identity: %d sessions assigned to candidates (%d linked to an earlier one)", len(rows), linked)
+
+
+def _close_duplicate_live_applications(conn: sqlite3.Connection) -> None:
+    """Before the one-live-application index: keep the most recent live application per candidate and
+    process, close the others (audited)."""
+    groups = conn.execute(
+        "SELECT candidate_id, profile_id FROM sessions WHERE status IN ('active', 'verifying') "
+        "AND candidate_id IS NOT NULL GROUP BY candidate_id, profile_id HAVING COUNT(*) > 1").fetchall()
+    for group in groups:
+        rows = conn.execute(
+            "SELECT id, stage FROM sessions WHERE candidate_id=? AND profile_id=? AND status IN ('active', 'verifying') "
+            "ORDER BY last_ts DESC, started_at DESC", (group["candidate_id"], group["profile_id"])).fetchall()
+        for row in rows[1:]:
+            conn.execute("UPDATE sessions SET status='abandoned', stage='abandoned', dropped_at_stage=?, updated_at=? "
+                         "WHERE id=?", (row["stage"], _now(), row["id"]))
+            conn.execute("INSERT INTO events (session_id, type, payload_json, ts, stage) VALUES (?,?,?,?,?)",
+                         (row["id"], "session_close", json.dumps({"outcome": "abandoned", "reason": "superseded",
+                                                                  "by": "migration", "kept": rows[0]["id"]}),
+                          _now(), "abandoned"))
 
 
 _JSON_COLUMNS = (
@@ -359,15 +441,17 @@ def save_session(state: Any) -> None:
     }
     disqualify_reason = summary.get("disqualify_reason") or getattr(state, "disqualify_reason", None)
     with get_conn() as conn:
-        before = conn.execute("SELECT pipeline_stage, pipeline_manual FROM sessions WHERE id=?", (state.id,)).fetchone()
+        before = conn.execute("SELECT pipeline_stage, pipeline_manual, candidate_id FROM sessions WHERE id=?",
+                              (state.id,)).fetchone()
+        candidate_id = _candidate_of_state(conn, state, before["candidate_id"] if before is not None else None)
         conn.execute(
             """
             INSERT INTO sessions (id, profile_id, profile_revision, status, stage, language, source, contact, started_at,
                 last_ts, updated_at, qualified, outcome, disqualify_reason, dropped_at_stage, duration_seconds,
                 candidate_turns, reengage_attempts, data_json, summary_json, flags_json,
                 notes_json, languages_json, given_up_json, rag_hits_json, state_json,
-                display_name, display_city, score, pipeline_stage, bot_paused)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                display_name, display_city, score, pipeline_stage, bot_paused, candidate_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 profile_id=excluded.profile_id, profile_revision=excluded.profile_revision,
                 status=excluded.status, stage=excluded.stage, language=excluded.language,
@@ -382,7 +466,7 @@ def save_session(state: Any) -> None:
                 given_up_json=excluded.given_up_json, rag_hits_json=excluded.rag_hits_json,
                 state_json=excluded.state_json,
                 display_name=excluded.display_name, display_city=excluded.display_city, score=excluded.score,
-                bot_paused=excluded.bot_paused,
+                bot_paused=excluded.bot_paused, candidate_id=excluded.candidate_id,
                 pipeline_stage=CASE WHEN sessions.pipeline_manual=1 THEN sessions.pipeline_stage
                                     ELSE excluded.pipeline_stage END
             """,
@@ -402,7 +486,7 @@ def save_session(state: Any) -> None:
                 json.dumps(state.given_up, ensure_ascii=False),
                 json.dumps(state.rag_hits, ensure_ascii=False),
                 json.dumps(agent_state, ensure_ascii=False),
-                derived["name"], derived["city"], derived["score"], new_auto, 1 if bot_paused else 0,
+                derived["name"], derived["city"], derived["score"], new_auto, 1 if bot_paused else 0, candidate_id,
             ),
         )
         if before is not None and not before["pipeline_manual"] and before["pipeline_stage"] != new_auto:
@@ -412,6 +496,23 @@ def save_session(state: Any) -> None:
                  _now(), state.stage),
             )
         _refresh_search_text(conn, state.id)
+
+
+def _candidate_of_state(conn: sqlite3.Connection, state: Any, stored: Optional[str]) -> str:
+    """Every session belongs to a candidate. The state's candidate (following merges), else the stored
+    one, else the candidate of its phone number (a claimed key), else a new anonymous candidate."""
+    candidate_id = getattr(state, "candidate_id", None) or stored
+    if candidate_id:
+        candidate_id = _follow_merges(conn, candidate_id)
+    else:
+        from ..identity.phones import canonical_phone
+
+        key = canonical_phone(getattr(state, "contact", None))
+        candidate_id = (_candidate_for_key(conn, "phone", key, False, getattr(state, "source", None))
+                        if key else _new_candidate(conn))
+    if hasattr(state, "candidate_id"):
+        state.candidate_id = candidate_id
+    return candidate_id
 
 
 # Message kinds in the conversation registry. Candidate side: what they sent; assistant side:
@@ -691,6 +792,177 @@ def purge(retention_days: int) -> int:
     with get_conn() as conn:
         cur = conn.execute("DELETE FROM sessions WHERE started_at < ?", (cutoff,))
         return cur.rowcount
+
+
+# ---------- candidates (identity: backend/identity/) ----------
+
+LIVE_APPLICATION = ("active", "verifying")
+
+
+def _new_candidate(conn: sqlite3.Connection) -> str:
+    candidate_id = uuid.uuid4().hex
+    conn.execute("INSERT INTO candidates (id, created_at) VALUES (?,?)", (candidate_id, _now()))
+    return candidate_id
+
+
+def _follow_merges(conn: sqlite3.Connection, candidate_id: str) -> str:
+    seen: set[str] = set()
+    while candidate_id not in seen:
+        seen.add(candidate_id)
+        row = conn.execute("SELECT merged_into FROM candidates WHERE id=?", (candidate_id,)).fetchone()
+        if row is None or not row["merged_into"]:
+            return candidate_id
+        candidate_id = row["merged_into"]
+    return candidate_id
+
+
+def _candidate_for_key(conn: sqlite3.Connection, kind: str, value: str, verified: bool, source: Optional[str],
+                       max_age_days: Optional[int] = None) -> str:
+    now = _now()
+    row = conn.execute("SELECT candidate_id, last_seen FROM candidate_keys WHERE kind=? AND value=?",
+                       (kind, value)).fetchone()
+    if row is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat(timespec="seconds") \
+            if max_age_days else None
+        if cutoff is None or row["last_seen"] >= cutoff:
+            conn.execute("UPDATE candidate_keys SET last_seen=?, verified=MAX(verified, ?) WHERE kind=? AND value=?",
+                         (now, 1 if verified else 0, kind, value))
+            return _follow_merges(conn, row["candidate_id"])
+        # unseen for too long (a recycled phone number): from now on it is someone else's
+        candidate_id = _new_candidate(conn)
+        conn.execute("UPDATE candidate_keys SET candidate_id=?, verified=?, source=?, first_seen=?, last_seen=? "
+                     "WHERE kind=? AND value=?", (candidate_id, 1 if verified else 0, source, now, now, kind, value))
+        return candidate_id
+    candidate_id = _new_candidate(conn)
+    cur = conn.execute(
+        "INSERT INTO candidate_keys (kind, value, candidate_id, verified, source, first_seen, last_seen) "
+        "VALUES (?,?,?,?,?,?,?) ON CONFLICT(kind, value) DO NOTHING",
+        (kind, value, candidate_id, 1 if verified else 0, source, now, now))
+    if cur.rowcount == 0:  # someone else created it meanwhile
+        conn.execute("DELETE FROM candidates WHERE id=?", (candidate_id,))
+        row = conn.execute("SELECT candidate_id FROM candidate_keys WHERE kind=? AND value=?", (kind, value)).fetchone()
+        return _follow_merges(conn, row["candidate_id"])
+    return candidate_id
+
+
+def candidate_for_key(kind: str, value: str, verified: bool = False, source: Optional[str] = None,
+                      max_age_days: Optional[int] = None) -> str:
+    """The candidate identified by a key, created with it if unknown (get-or-create)."""
+    with get_conn() as conn:
+        return _candidate_for_key(conn, kind, value, verified, source, max_age_days)
+
+
+def new_candidate() -> str:
+    with get_conn() as conn:
+        return _new_candidate(conn)
+
+
+def resolve_candidate(candidate_id: str) -> str:
+    """The surviving candidate of a (possibly merged) candidate id."""
+    with get_conn() as conn:
+        return _follow_merges(conn, candidate_id)
+
+
+def key_owner(kind: str, value: str) -> Optional[str]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT candidate_id FROM candidate_keys WHERE kind=? AND value=?", (kind, value)).fetchone()
+        return _follow_merges(conn, row["candidate_id"]) if row else None
+
+
+def add_candidate_key(candidate_id: str, kind: str, value: str, verified: bool = False,
+                      source: Optional[str] = None) -> None:
+    now = _now()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO candidate_keys (kind, value, candidate_id, verified, source, first_seen, last_seen) "
+            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(kind, value) DO UPDATE SET last_seen=excluded.last_seen",
+            (kind, value, candidate_id, 1 if verified else 0, source, now, now))
+
+
+def candidate_sessions(candidate_id: str) -> list[dict[str, Any]]:
+    """Every application of a candidate, most recent activity first."""
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT id, profile_id, status, stage, source, contact, bot_paused, started_at, last_ts, updated_at "
+            "FROM sessions WHERE candidate_id=? ORDER BY last_ts DESC, started_at DESC, rowid DESC", (candidate_id,))]
+
+
+def merge_candidates(survivor: str, other: str) -> list[str]:
+    """``other`` becomes ``survivor``: its applications and keys move, the record points at the survivor.
+    Returns the moved session ids. The caller closes live duplicates first (one live application per
+    candidate and process)."""
+    with get_conn() as conn:
+        survivor, other = _follow_merges(conn, survivor), _follow_merges(conn, other)
+        if survivor == other:
+            return []
+        moved = [r["id"] for r in conn.execute("SELECT id FROM sessions WHERE candidate_id=?", (other,))]
+        conn.execute("UPDATE sessions SET candidate_id=? WHERE candidate_id=?", (survivor, other))
+        conn.execute("UPDATE candidate_keys SET candidate_id=? WHERE candidate_id=?", (survivor, other))
+        rows = {r["id"]: json.loads(r["channels_json"] or "{}")
+                for r in conn.execute("SELECT id, channels_json FROM candidates WHERE id IN (?,?)", (survivor, other))}
+        channels = {**rows.get(other, {}), **rows.get(survivor, {})}
+        conn.execute("UPDATE candidates SET channels_json=? WHERE id=?", (json.dumps(channels), survivor))
+        conn.execute("UPDATE candidates SET merged_into=?, merged_at=? WHERE id=?", (survivor, _now(), other))
+        return moved
+
+
+def candidate_channels(candidate_id: str) -> dict[str, dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT channels_json FROM candidates WHERE id=?",
+                           (_follow_merges(conn, candidate_id),)).fetchone()
+        return json.loads(row["channels_json"] or "{}") if row else {}
+
+
+def update_candidate_channel(candidate_id: str, channel: str, **fields: Any) -> None:
+    """Per-channel facts about a person (address, WhatsApp window, conversation focus)."""
+    with get_conn() as conn:
+        candidate_id = _follow_merges(conn, candidate_id)
+        row = conn.execute("SELECT channels_json FROM candidates WHERE id=?", (candidate_id,)).fetchone()
+        if row is None:
+            return
+        channels = json.loads(row["channels_json"] or "{}")
+        channels.setdefault(channel, {}).update({k: v for k, v in fields.items() if v is not None})
+        conn.execute("UPDATE candidates SET channels_json=? WHERE id=?", (json.dumps(channels), candidate_id))
+
+
+# ---------- idempotency (provider retries of phone webhooks) ----------
+
+IDEMPOTENCY_STALE_SECONDS = 180  # a claim still "processing" after this long died with its request
+
+
+def claim_idempotency(scope: str, key: str) -> bool:
+    """True: this request must be processed now. False: it is (being) processed already."""
+    now = datetime.now(timezone.utc)
+    stale = (now - timedelta(seconds=IDEMPOTENCY_STALE_SECONDS)).isoformat()
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO idempotency (scope, key, state, created_at, updated_at) VALUES (?,?,'processing',?,?) "
+            "ON CONFLICT(scope, key) DO UPDATE SET state='processing', updated_at=excluded.updated_at "
+            "WHERE idempotency.state='processing' AND idempotency.updated_at < ?",
+            (scope, key, now.isoformat(), now.isoformat(), stale))
+        if now.second == 0:  # cheap housekeeping: retries come within minutes, not days
+            conn.execute("DELETE FROM idempotency WHERE created_at < ?", ((now - timedelta(days=1)).isoformat(),))
+        return cur.rowcount == 1
+
+
+def idempotency_result(scope: str, key: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT state, response_json FROM idempotency WHERE scope=? AND key=?", (scope, key)).fetchone()
+        if row is None:
+            return None
+        return {"state": row["state"], "response": json.loads(row["response_json"]) if row["response_json"] else None}
+
+
+def finish_idempotency(scope: str, key: str, response: Any) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE idempotency SET state='done', response_json=?, updated_at=? WHERE scope=? AND key=?",
+                     (json.dumps(response, ensure_ascii=False, default=str), _now(), scope, key))
+
+
+def release_idempotency(scope: str, key: str) -> None:
+    """The request failed: let the provider's retry through."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM idempotency WHERE scope=? AND key=?", (scope, key))
 
 
 # ---------- backoffice: recruiter-owned columns ----------

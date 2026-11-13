@@ -14,6 +14,8 @@ from ..config import settings
 from ..screening.agent import ScreeningAgent, SessionState
 from ..screening.guardrails import redact_pii, screen_input
 from ..session_store import SessionStore
+from ..identity import service as identity
+from ..screening.profile import localize as localize_text
 from ..storage import db
 from .base import BaseChannel, ResolvedSession, normalize_contact, split_message
 from .contracts import (InboundMessage, MediaError, MessagingClient, SendResult, StatusUpdate, Transcriber,
@@ -351,8 +353,12 @@ class MessagingChannel(BaseChannel):
     # ---------- per-channel state (kept in the session, owned by the channel) ----------
 
     def last_inbound(self, state: SessionState) -> Optional[datetime]:
-        """When the candidate last wrote on this channel (None = unknown, e.g. older sessions)."""
+        """When the candidate last wrote on this channel (None = unknown, e.g. older sessions). The
+        24h window is the person's, not the application's: another application's message counts."""
         value = state.channel_state.get(self.source, {}).get("inbound_at")
+        person = identity.channel_info(state.candidate_id, self.source).get("inbound_at")
+        if person and (not value or person > value):
+            value = person
         try:
             return datetime.fromisoformat(value) if value else None
         except ValueError:
@@ -360,6 +366,11 @@ class MessagingChannel(BaseChannel):
 
     def set_last_inbound(self, state: SessionState, when: datetime) -> None:
         state.channel_state.setdefault(self.source, {})["inbound_at"] = when.isoformat()
+        if state.candidate_id:
+            info = identity.channel_info(state.candidate_id, self.source)
+            # keep the later of the two: a known-closed window (an async failure) rewinds the session only
+            if when.isoformat() >= info.get("inbound_at", "") or when < datetime.now(timezone.utc) - self.WINDOW:
+                identity.note_channel(state.candidate_id, self.source, inbound_at=when.isoformat())
 
     def window_open(self, state: SessionState, now: Optional[datetime] = None,
                     margin: timedelta = timedelta(minutes=5)) -> Optional[bool]:
@@ -409,27 +420,55 @@ class MessagingChannel(BaseChannel):
         not replaced by the template: it stays queued and goes out when the
         candidate answers the template.
         """
-        if not state.reachable_on(self.source) or not state.contact:
+        address = self.address_of(state)
+        if not address:
             return False
         window = self.window_open(state)
         if window is False:
             reason = "window_closed"
         else:
-            result = self.provider.send_text(state.contact, text)
-            self._record(state.id, state.contact, purpose, text, result)
+            result = self.provider.send_text(address, self._labelled(state, text))
+            self._record(state.id, address, purpose, text, result)
             if result.ok:
                 log.info("whatsapp outbound sent session=%s id=%s", state.id, result.id)
+                if purpose != "nudge":  # the candidate's answer to this message belongs to this application
+                    identity.note_channel(state.candidate_id, self.source, focus=state.id)
                 return True
             if result.error_code not in self.provider.window_error_codes:
                 return False
             reason = f"error_{result.error_code}"
         return self._send_template(state, reason) and purpose == "nudge"
 
+    def address_of(self, state: SessionState) -> Optional[str]:
+        """Where to write to the candidate of ``state`` on this channel: the address the channel last
+        saw them use (e.g. WhatsApp's ``+521…`` for a Mexican referral stored as ``+52…``), for this
+        or another of their applications; else the application's own number if it was used here."""
+        seen = identity.channel_info(state.candidate_id, self.source).get("address")
+        if seen:
+            return seen
+        return state.contact if state.reachable_on(self.source) and state.contact else None
+
+    def can_reach(self, state: SessionState) -> bool:
+        return bool(self.address_of(state))
+
+    def _labelled(self, state: SessionState, text: str) -> str:
+        """With several live applications, a push says which job it is about."""
+        if not identity.live_applications(state.candidate_id, exclude=state.id):
+            return text
+        try:
+            profile = self.agent.profile(state)
+        except KeyError:
+            return text
+        role = localize_text(profile.role, state.language.value)
+        label = " · ".join(part for part in (role, profile.company) if part)
+        return f"{label}: {text}" if label else text
+
     def send_message(self, state: SessionState, text: str) -> bool:
         """Recruiter message / check decision: delivered only if the candidate reads these words.
         Waits for a turn of the candidate that is still being answered, so it comes after that reply
         (never called from the event loop: nudges, which are, do not wait)."""
-        if state.contact and not self.wait_until_idle(state.contact):
+        address = self.address_of(state)
+        if address and not self.wait_until_idle(address):
             log.warning("session %s: a turn is still in flight; sending anyway", state.id)
         return self.send_outbound(state, text, purpose="message")
 
@@ -438,8 +477,9 @@ class MessagingChannel(BaseChannel):
             log.error("session %s: WhatsApp requires a template for this push; set %s",
                       state.id, self.provider.template_setting)
             return False
-        result = self.provider.send_template(state.contact, self._template_variables(state), state.language.value)
-        self._record(state.id, state.contact, "template", self.provider.template_ref, result)
+        address = self.address_of(state)
+        result = self.provider.send_template(address, self._template_variables(state), state.language.value)
+        self._record(state.id, address, "template", self.provider.template_ref, result)
         if not result.ok:
             return False
         log.info("whatsapp outbound sent as template session=%s id=%s (%s)", state.id, result.id, reason)

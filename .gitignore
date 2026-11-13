@@ -3,6 +3,7 @@ __pycache__/
 .env
 data/*.db
 data/*.db-*
+data/identity.key
 .pytest_cache/
 .venv/
 _probe.py

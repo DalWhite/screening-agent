@@ -58,9 +58,13 @@ class ReengagementMonitor:
                 continue
             if state.bot_paused:  # a recruiter owns the conversation: no automatic nudges or closing
                 continue
-            if not any(m.get("role") == "user" for m in state.history):
-                continue
             idle = (now - state.last_candidate_ts).total_seconds()
+            if not any(m.get("role") == "user" for m in state.history):
+                # never answered (a caller who hung up during the opening, an ignored referral): not
+                # nudged, but not "in conversation" for ever either
+                if idle >= self._never_answered_limit(state):
+                    self._close(state, reason="expired")
+                continue
             attempts = state.reengage_attempts
             if attempts == 0 and idle >= settings.reengage_first_delay:
                 self._nudge(state, 1)
@@ -81,8 +85,17 @@ class ReengagementMonitor:
         db.append_events(state.id, [{"type": "reengage_nudge", "payload": {"attempt": attempt, "pushed": pushed, "idle_seconds": int((datetime.now(timezone.utc) - state.last_candidate_ts).total_seconds())}}], state.stage)
         log.info("re-engagement nudge %d for session %s (pushed=%s)", attempt, state.id, pushed)
 
+    @staticmethod
+    def _never_answered_limit(state: SessionState) -> float:
+        if state.source == "backoffice":  # a recruiter's referral waits longer for the candidate
+            return settings.referral_wait_days * 86400
+        return settings.resume_window_hours * 3600
+
     def _close_abandoned(self, state: SessionState) -> None:
-        _, decision = self.agent.end(state, reason="silence")
+        self._close(state, reason="silence")
+
+    def _close(self, state: SessionState, reason: str) -> None:
+        _, decision = self.agent.end(state, reason=reason)
         db.save_session(state)
         db.append_events(state.id, decision.events, state.stage)
-        log.info("session %s closed as abandoned after silence", state.id)
+        log.info("session %s closed as abandoned (%s)", state.id, reason)

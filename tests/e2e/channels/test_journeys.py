@@ -115,7 +115,9 @@ def test_each_line_runs_its_own_process(stacks):
     assert sorted(s["profile_id"] for s in stack.sessions_for(phone)) == ["construction_laborer", "delivery_courier"]
 
 
-def test_a_rejected_candidate_who_calls_again_starts_over(page: Page, live):
+def test_a_rejected_candidate_who_calls_again_is_not_screened_again(page: Page, live):
+    """A decision is final and the candidate stays one (docs/identity_design.md): within the follow-up
+    period the call takes a message for the recruiter instead of starting a second screening."""
     name = f"Lucía {unique_surname()}"
     phone = live.sim.phone(unique_phone(), name)
     phone.whatsapp("hola")
@@ -124,11 +126,12 @@ def test_a_rejected_candidate_who_calls_again_starts_over(page: Page, live):
     assert "18" in phone.whatsapp("tengo 17 años")[0] or live.sessions_for(phone)[0]["status"] == "disqualified"
     assert live.sessions_for(phone)[0]["status"] == "disqualified"
     call = phone.call()
-    assert "Constructora Horizonte" in call.prompt  # a final decision is not reopened from another channel
+    assert "Constructora Horizonte" not in call.prompt and "ya tenemos tu candidatura" in call.prompt.lower()
     call.hangup()
+    assert [s["status"] for s in live.sessions_for(phone)] == ["disqualified"]  # not reopened, no second one
 
     page.goto(f"{live.url}/backoffice#/candidates?q={quote(phone.number.lstrip('+'))}")
-    expect(page.get_by_test_id("candidate-row")).to_have_count(2)
+    expect(page.get_by_test_id("candidate-row")).to_have_count(1)
 
 
 def test_silent_caller_is_closed_then_resumes_on_whatsapp(page: Page, live):

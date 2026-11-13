@@ -6,6 +6,7 @@
     tests/e2e/           live servers + a real browser (Playwright)      marker: e2e (+ channels)
     tests/stress/        load and resource usage (opt-in)                marker: stress
     tests/evals/         scripted conversation evals (a script, not pytest)
+    tests/*/identity/    candidate identity & idempotency scenarios    marker: identity (+ layer)
     tests/support/       helpers shared by the layers (importable)
 
 ``python -m pytest`` runs unit + integration; ``-m e2e`` / ``-m stress`` the others.
@@ -72,6 +73,8 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(getattr(pytest.mark, parts[0]))
             if parts[0] == "e2e" and len(parts) > 2 and parts[1] == "channels":
                 item.add_marker(pytest.mark.channels)
+            if "identity" in parts[1:-1]:  # tests/unit/identity, tests/integration/identity
+                item.add_marker(pytest.mark.identity)
 
 
 @pytest.fixture(autouse=True)

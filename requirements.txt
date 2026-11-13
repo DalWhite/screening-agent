@@ -7,3 +7,4 @@ pytest==9.1.1
 python-dateutil==2.9.0
 python-dotenv>=1.0
 twilio==9.12.0
+python-multipart>=0.0.9  # form-encoded webhooks (Twilio); FastAPI needs it to parse them

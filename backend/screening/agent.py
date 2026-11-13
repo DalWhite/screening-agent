@@ -28,6 +28,12 @@ from .schema import (
 
 MAX_ABUSE = 3
 
+# A candidate whose application was closed (knockout, duplicate) writes again during the follow-up period.
+CLOSED_APPLICATION = {
+    "es": "Tu candidatura para este puesto ya está cerrada. Si crees que hay un error, un reclutador puede revisarla.",
+    "en": "Your application for this job is already closed. If you think something is wrong, a recruiter can review it.",
+}
+
 _LEAK_MARKERS = (
     "FAQ:",
     "Pending question:",
@@ -87,6 +93,9 @@ class SessionState:
     # Per-channel bookkeeping owned by the channel adapters (e.g. when the candidate last wrote on
     # WhatsApp, for its 24h window). Opaque to the agent; persisted with the session.
     channel_state: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # The person this application belongs to (docs/identity_design.md). Set by the channels when they
+    # identify the candidate; storage assigns one to any session saved without it.
+    candidate_id: Optional[str] = None
 
     @property
     def current_channel(self) -> str:
@@ -268,7 +277,12 @@ class ScreeningAgent:
             return self._listen_only(state, decision, screened.reason, clean), decision
 
         if state.stage in TERMINAL_STAGES:
-            closing = profile.messages.verifying if state.stage == Stage.VERIFYING else profile.messages.review
+            if state.stage == Stage.VERIFYING:
+                closing = profile.messages.verifying
+            elif state.stage in (Stage.DISQUALIFIED, Stage.DUPLICATE):  # follow-up of a closed application
+                closing = CLOSED_APPLICATION
+            else:
+                closing = profile.messages.review
             reply = localize(closing, state.language.value)
             decision.events.append({"type": "ignored_after_close", "payload": {"outcome": state.stage}})
             return reply, decision
